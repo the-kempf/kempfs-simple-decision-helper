@@ -1,8 +1,8 @@
-# Kempf's Simple Decision Helper
+# Kempf Simple Decision Helper
 
 A visual decision-mapping plugin for [Obsidian](https://obsidian.md/).
 
-Kempf's Simple Decision Helper turns a difficult choice into a clear map of options, benefits, drawbacks, and sub-options. It calculates consistent comparison scores without turning the decision into a complicated spreadsheet.
+Kempf Simple Decision Helper turns a difficult choice into a clear map of options, benefits, drawbacks, and sub-options. It calculates consistent comparison scores without turning the decision into a complicated spreadsheet.
 
 The plugin is deliberately simple to operate: build the map, rate what matters, and compare the available paths.
 
@@ -110,7 +110,7 @@ Once available in the Obsidian Community Plugins directory:
 
 1. Open **Settings → Community plugins**.
 2. Select **Browse**.
-3. Search for **Kempf's Simple Decision Helper**.
+3. Search for **Kempf Simple Decision Helper**.
 4. Select **Install**, then **Enable**.
 
 ### Manual installation
@@ -128,7 +128,7 @@ Once available in the Obsidian Community Plugins directory:
 
 ## Privacy
 
-Kempf's Simple Decision Helper works entirely inside Obsidian. It does not use artificial intelligence, connect to external services, collect analytics, or transmit decision data.
+Kempf Simple Decision Helper works entirely inside Obsidian. It does not use artificial intelligence, connect to external services, collect analytics, or transmit decision data.
 
 ## Limitations
 
@@ -144,4 +144,3 @@ See [HELP.md](HELP.md) for the full plain-language guide.
 ## License
 
 Released under the [MIT License](LICENSE).
-

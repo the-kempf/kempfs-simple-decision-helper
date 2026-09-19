@@ -296,5 +296,4 @@ Markdown creates a readable Obsidian note containing the decision, recommendatio
 
 ## Privacy
 
-Kempf's Simple Decision Helper works entirely inside Obsidian. It does not use artificial intelligence, connect to external services, collect analytics, or transmit decision data.
-
+Kempf Simple Decision Helper works entirely inside Obsidian. It does not use artificial intelligence, connect to external services, collect analytics, or transmit decision data.

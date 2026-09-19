@@ -507,7 +507,7 @@ class DecisionHelperSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.addClass("kdh-global-settings");
-    containerEl.createEl("h2", { text: "Kempf's Simple Decision Helper" });
+    containerEl.createEl("h2", { text: "Kempf Simple Decision Helper" });
     containerEl.createEl("p", { cls: "kdh-settings-intro", text: "Choose where decision files are stored and how new decision maps begin." });
     const fileSection = containerEl.createDiv({ cls: "kdh-settings-card" });
     fileSection.createEl("h3", { text: "Files" });

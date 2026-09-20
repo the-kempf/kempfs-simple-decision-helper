@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.14 — Release metadata correction
+
+- Republished the mobile and export improvements under a new version so Obsidian can process the release correctly.
+
 ## 0.3.13 — Mobile and export improvements
 
 - Improved touchscreen panning, pinch-to-zoom, and long-press menu handling.

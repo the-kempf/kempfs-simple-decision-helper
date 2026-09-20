@@ -40,20 +40,20 @@ const NODE_TYPES = {
   decision: { label: "Decision", color: "decision" },
   option: { label: "Option", color: "option" },
   benefit: { label: "Benefit", color: "benefit" },
-  risk: { label: "Drawback", color: "risk" },
+  risk: { label: "Risk", color: "risk" },
 };
 
 const DEFAULT_RELATIONSHIPS = {
   option: "Option",
   benefit: "Benefit",
-  risk: "Drawback",
+  risk: "Risk",
 };
 
 const TYPE_GUIDANCE = {
   decision: "The specific question that must be resolved.",
   option: "A realistic course of action you could choose.",
   benefit: "A likely advantage of a specific option.",
-  risk: "A possible cost, problem, or disadvantage of a specific option.",
+  risk: "Something that could go wrong with a specific option.",
 };
 
 function emptyMap() {
@@ -110,6 +110,7 @@ class NodeEditorModal extends Modal {
     const { contentEl } = this;
     contentEl.addClass("kdh-editor");
     contentEl.createEl("h2", { text: this.heading });
+    const formEl = contentEl.createDiv({ cls: "kdh-editor-scroll" });
 
     let relationshipInput;
     let typeHelp;
@@ -126,7 +127,6 @@ class NodeEditorModal extends Modal {
       if (!scoreBox) return;
       scoreBox.empty();
       if (this.type !== "benefit" && this.type !== "risk") return;
-      scoreBox.createEl("h3", { text: "Ratings" });
       scoreBox.createDiv({
         cls: "kdh-score-help",
         text: "Use 1 for very low and 5 for very high.",
@@ -138,7 +138,6 @@ class NodeEditorModal extends Modal {
         .addSlider((slider) => slider
           .setLimits(1, 5, 1)
           .setValue(this.likelihood)
-          .setDynamicTooltip()
           .onChange((value) => { this.likelihood = value; updateLikelihood(); }));
       scoreBox.lastElementChild?.querySelector(".setting-item-control")?.prepend(likelihoodValue);
       updateLikelihood();
@@ -150,7 +149,6 @@ class NodeEditorModal extends Modal {
         .addSlider((slider) => slider
           .setLimits(1, 5, 1)
           .setValue(this.impact)
-          .setDynamicTooltip()
           .onChange((value) => { this.impact = value; updateImpact(); }));
       scoreBox.lastElementChild?.querySelector(".setting-item-control")?.prepend(impactValue);
       updateImpact();
@@ -161,7 +159,6 @@ class NodeEditorModal extends Modal {
       if (!optionBox) return;
       optionBox.empty();
       if (this.type !== "option" || !this.hasSubOptions) return;
-      optionBox.createEl("h3", { text: "Sub-options" });
       new Setting(optionBox)
         .setName("How do these sub-options work?")
         .addDropdown((dropdown) => dropdown
@@ -171,9 +168,7 @@ class NodeEditorModal extends Modal {
           .onChange((value) => { this.subOptionMode = value; }));
     };
 
-    const identitySection = contentEl.createDiv({ cls: "kdh-editor-section" });
-    identitySection.createEl("h3", { text: this.isRoot ? "Decision" : "Item" });
-    const topLine = identitySection.createDiv({ cls: `kdh-editor-topline${this.isRoot ? " is-root" : ""}` });
+    const topLine = formEl.createDiv({ cls: `kdh-editor-topline${this.isRoot ? " is-root" : ""}` });
     if (!this.isRoot) {
       const connectionGroup = topLine.createDiv({ cls: "kdh-topline-group kdh-connection-group" });
       connectionGroup.createEl("label", { text: "Connection label" });
@@ -212,26 +207,26 @@ class NodeEditorModal extends Modal {
     dealBreakerGroup.createEl("label", { text: "Deal-breaker" });
     new Setting(dealBreakerGroup).addToggle((toggle) => toggle
       .setValue(this.isConstraint)
-      .setTooltip("Disqualify any option path containing this drawback")
+      .setTooltip("Disqualify any option path containing this risk")
       .onChange((value) => { this.isConstraint = value; }));
     renderDealBreaker();
-    typeHelp = identitySection.createDiv({ cls: "kdh-type-help", text: TYPE_GUIDANCE[this.type] || "" });
+    typeHelp = formEl.createDiv({ cls: "kdh-type-help", text: TYPE_GUIDANCE[this.type] || "" });
 
     let textarea;
-    new Setting(identitySection)
+    new Setting(formEl)
       .setClass("kdh-text-setting")
       .setName("Node text")
       .addTextArea((field) => {
         textarea = field.inputEl;
         field
-          .setPlaceholder(this.isRoot ? "What needs to be decided?" : "Enter the option, benefit, or drawback")
+          .setPlaceholder(this.isRoot ? "What needs to be decided?" : "Enter the option, benefit, or risk")
           .setValue(this.text)
           .onChange((value) => { this.text = value; });
         textarea.rows = 5;
       });
 
-    scoreBox = contentEl.createDiv({ cls: "kdh-score-controls" });
-    optionBox = contentEl.createDiv({ cls: "kdh-option-controls" });
+    scoreBox = formEl.createDiv({ cls: "kdh-score-controls" });
+    optionBox = formEl.createDiv({ cls: "kdh-option-controls" });
     renderScoreControls();
     renderOptionControls();
 
@@ -278,12 +273,9 @@ class RelationshipModal extends Modal {
   }
 
   onOpen() {
-    this.modalEl.addClass("kdh-relationship-modal");
     this.contentEl.createEl("h2", { text: "Edit connection label" });
-    this.contentEl.createEl("p", { cls: "kdh-settings-intro", text: "Describe how this item relates to its parent." });
     let input;
-    const editor = this.contentEl.createDiv({ cls: "kdh-editor-section" });
-    new Setting(editor).setName("Label").addText((field) => {
+    new Setting(this.contentEl).addText((field) => {
       input = field.inputEl;
       field.setValue(this.value).onChange((value) => { this.value = value; });
     });
@@ -306,7 +298,7 @@ class DecisionHelpModal extends Modal {
     const { contentEl } = this;
     contentEl.addClass("kdh-help-content");
     contentEl.createEl("h2", { text: "Simple Decision Helper" });
-    contentEl.createEl("p", { cls: "kdh-help-intro", text: "Build the decision from the top down, rate the likely benefits and drawbacks, and compare the options. The result organizes your judgment; it does not guarantee the correct answer." });
+    contentEl.createEl("p", { cls: "kdh-help-intro", text: "Build the decision from the top down, rate the likely benefits and risks, and compare the options. The result organizes your judgment; it does not guarantee the correct answer." });
 
     const section = (title, text, items = []) => {
       contentEl.createEl("h3", { text: title });
@@ -328,34 +320,34 @@ class DecisionHelpModal extends Modal {
     [
       "Write one clear question in the Decision node.",
       "Add each realistic choice as an Option.",
-      "Under each option, add the good outcomes as Benefits and possible problems as Drawbacks.",
-      "Rate every benefit and drawback for Likelihood and Impact.",
-      "Compare the options in the Decision summary. Review any warning before relying on the recommendation.",
+      "Under each option, add the good outcomes as Benefits and possible problems as Risks.",
+      "Rate every benefit and risk for Likelihood and Impact.",
+      "Compare the options in the Decision summary. Review any warning before relying on the leader.",
     ].forEach((text) => steps.createEl("li", { text }));
 
     section("What each node means", "", [
       "Decision: the question you are trying to answer. A file has one Decision node.",
       "Option: something you could actually choose or do.",
       "Benefit: a possible good result of an option. Benefits are final scoring factors and cannot have children.",
-      "Drawback: a possible cost, problem, or bad result of an option. Drawbacks are final scoring factors and cannot have children.",
+      "Risk: a possible cost, problem, or bad result of an option. Risks are final scoring factors and cannot have children.",
     ]);
-    section("Rating benefits and drawbacks", "Likelihood means how likely the result is. Impact means how much it would matter. Both run from 1 (very low) to 5 (very high). For example, rain might be likely (4) but have a small impact (2).");
+    section("Rating benefits and risks", "Likelihood means how likely the result is. Impact means how much it would matter. Both run from 1 (very low) to 5 (very high). For example, rain might be likely (4) but have a small impact (2).");
     section("How scores work", "The helper uses the same consistent calculation for every choice. You only supply the two simple 1–5 ratings.");
-    formula("Factor score", "Likelihood × Impact", "Each benefit or drawback scores from 1 to 25.");
-    formula("Option score", "((Σ Benefit Scores − Σ Drawback Scores) ÷ (Number of Factors × 25)) × 100", "This puts every option on the same −100 to +100 scale, even when options have different numbers of factors.");
+    formula("Factor score", "Likelihood × Impact", "Each benefit or risk scores from 1 to 25.");
+    formula("Option score", "((Σ Benefit Scores − Σ Risk Scores) ÷ (Number of Factors × 25)) × 100", "This puts every option on the same −100 to +100 scale, even when options have different numbers of factors.");
     formula("Main decision score", "max(Eligible Top-Level Option Scores)", "The decision shows the strongest option that is not blocked by a deal-breaker.");
     section("Reading the scale", "+100 is entirely favorable, −100 is entirely unfavorable, and a score near 0 is balanced. The score helps comparison; it does not make the choice for you.");
     section("Sub-options: Single Path or All Paths", "Use Single Path when the child options are alternatives, such as drive, take the bus, or walk. Use All Paths when every child is part of one plan, such as review notes, practice questions, and get enough sleep.");
     section("Sub-option badges", "An option with child options is marked SINGLE PATH or ALL PATHS, so the tree shows whether it will select the strongest child path or combine every child path.");
-    section("Deal-breakers", "Turn this on only for a drawback that makes an option unacceptable regardless of its numerical score—for example, an option that exceeds a firm budget limit.");
-    section("Reading the Decision summary", "The comparison chart is ordered from strongest to weakest. Red extends left for drawbacks and green extends right for benefits. Click an option in the chart to select and reveal the same node in the tree. Not evaluated means an option has no benefits or drawbacks yet and is excluded from the recommendation.");
+    section("Deal-breakers", "Turn this on only for a risk that makes an option unacceptable regardless of its numerical score—for example, an option that exceeds a firm budget limit.");
+    section("Reading the Decision summary", "The comparison chart is ordered from strongest to weakest. Red extends left for risks and green extends right for benefits. Click an option in the chart to select and reveal the same node in the tree. Not evaluated means an option has no benefits or risks yet and is excluded from the recommendation.");
     section("Mouse and touch", "", [
       "Drag empty background with the left or middle mouse button to pan.",
       "Use the mouse wheel or a two-finger pinch to zoom.",
       "Drag a node onto a valid Decision or Option node to move its entire branch.",
       "Double-click a node to edit it.",
       "Right-click a node to move, copy, paste, edit, or delete its branch.",
-      "Right-click the background for layout, background color, imports, and exports.",
+      "Right-click the background for layout, background color, JSON backup import, and export options.",
       "On a touchscreen, press and hold a node or the background to open the same menus.",
     ]);
     section("Keyboard", "", [
@@ -368,7 +360,7 @@ class DecisionHelpModal extends Modal {
       "Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y redoes.",
     ]);
     section("Files and toolbar", "Each decision is its own .ksdh vault file. Global settings control the defaults for new decisions. The toolbar settings button opens options for the current decision, including warnings, node score labels, sibling spacing, and level spacing. The file-plus button starts another decision; the curved arrows undo and redo; minus and plus change zoom; the question mark opens this guide.");
-    section("Import and export", "Markdown creates a readable Obsidian note and decision report; it is for reading and sharing, not restoring a decision map. JSON creates an exact backup and is the only format that can be imported. SVG and JPG create shareable images, while PDF creates a printable one-page overview. An invalid JSON backup leaves the current decision untouched.");
+    section("Import and export", "JSON is the complete backup format and the only format that can restore a decision. Markdown creates a readable report without hidden backup data. SVG and JPG create shareable images, while PDF creates a printable one-page overview.");
   }
 
   onClose() { this.contentEl.empty(); }
@@ -387,28 +379,23 @@ class DecisionOptionsModal extends Modal {
   }
 
   onOpen() {
-    this.modalEl.addClass("kdh-options-modal");
     const { contentEl } = this;
     contentEl.createEl("h2", { text: "Decision options" });
-    contentEl.createEl("p", { cls: "kdh-settings-intro", text: "These settings apply only to this decision file." });
-    const displaySection = contentEl.createDiv({ cls: "kdh-settings-card" });
-    displaySection.createEl("h3", { text: "Display" });
-    new Setting(displaySection)
+    contentEl.createEl("p", { text: "These settings apply only to this decision file." });
+    new Setting(contentEl)
       .setName("Show instructional warnings")
       .setDesc("Show limited-evidence and sensitivity notices")
       .addToggle((toggle) => toggle
         .setValue(this.values.showWarnings)
         .onChange((value) => { this.values.showWarnings = value; }));
-    new Setting(displaySection)
+    new Setting(contentEl)
       .setName("Show score labels on nodes")
       .setDesc("Show factor scores and option results directly on the tree")
       .addToggle((toggle) => toggle
         .setValue(this.values.showScoreLabels)
         .onChange((value) => { this.values.showScoreLabels = value; }));
-    const spacingSection = contentEl.createDiv({ cls: "kdh-settings-card" });
-    spacingSection.createEl("h3", { text: "Tree spacing" });
     const addSpacing = (name, description, key) => {
-      new Setting(spacingSection)
+      new Setting(contentEl)
         .setName(name)
         .setDesc(description)
         .addDropdown((dropdown) => dropdown
@@ -506,12 +493,8 @@ class DecisionHelperSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.addClass("kdh-global-settings");
-    containerEl.createEl("h2", { text: "Kempf Simple Decision Helper" });
-    containerEl.createEl("p", { cls: "kdh-settings-intro", text: "Choose where decision files are stored and how new decision maps begin." });
-    const fileSection = containerEl.createDiv({ cls: "kdh-settings-card" });
-    fileSection.createEl("h3", { text: "Files" });
-    new Setting(fileSection)
+    containerEl.createEl("h2", { text: "Kempf's Simple Decision Helper" });
+    new Setting(containerEl)
       .setName("Default decision folder")
       .setDesc(`New .${FILE_EXTENSION} files will be saved in: ${this.plugin.settings.defaultFolder || "Vault root"}`)
       .addButton((button) => button
@@ -540,9 +523,8 @@ class DecisionHelperSettingTab extends PluginSettingTab {
           this.display();
         }));
 
-    const defaultsSection = containerEl.createDiv({ cls: "kdh-settings-card" });
-    defaultsSection.createEl("h3", { text: "New decision defaults" });
-    new Setting(defaultsSection)
+    containerEl.createEl("h3", { text: "New decision defaults" });
+    new Setting(containerEl)
       .setName("Default background")
       .setDesc("Background used when a new decision is created")
       .addDropdown((dropdown) => dropdown
@@ -554,7 +536,7 @@ class DecisionHelperSettingTab extends PluginSettingTab {
           this.plugin.settings.defaultBackground = value;
           await this.plugin.saveSettings();
         }));
-    new Setting(defaultsSection)
+    new Setting(containerEl)
       .setName("Default layout")
       .setDesc("Direction used by new decision trees")
       .addDropdown((dropdown) => dropdown
@@ -567,7 +549,7 @@ class DecisionHelperSettingTab extends PluginSettingTab {
           this.plugin.settings.defaultLayout = value;
           await this.plugin.saveSettings();
         }));
-    new Setting(defaultsSection)
+    new Setting(containerEl)
       .setName("Default zoom")
       .setDesc("Initial view used by new decisions")
       .addDropdown((dropdown) => dropdown
@@ -579,7 +561,7 @@ class DecisionHelperSettingTab extends PluginSettingTab {
           this.plugin.settings.defaultZoom = value;
           await this.plugin.saveSettings();
         }));
-    new Setting(defaultsSection)
+    new Setting(containerEl)
       .setName("Default sub-option behavior")
       .setDesc("How newly created options handle their sub-options")
       .addDropdown((dropdown) => dropdown
@@ -590,7 +572,7 @@ class DecisionHelperSettingTab extends PluginSettingTab {
           this.plugin.settings.defaultSubOptionMode = value;
           await this.plugin.saveSettings();
         }));
-    new Setting(defaultsSection)
+    new Setting(containerEl)
       .setName("Confirm before deleting")
       .setDesc("Ask before deleting a node and everything beneath it")
       .addToggle((toggle) => toggle
@@ -612,6 +594,12 @@ class DecisionMapView extends TextFileView {
     this.dataLoaded = false;
     this.viewOpened = false;
     this.promptTimer = null;
+    this.touchPointers = new Map();
+    this.touchGestureMoved = false;
+    this.touchGestureMulti = false;
+    this.touchSuppressUntil = 0;
+    this.longPressCancellers = new Set();
+    this.activeMenu = null;
   }
 
   getViewType() { return VIEW_TYPE; }
@@ -742,7 +730,7 @@ class DecisionMapView extends TextFileView {
     if (!this.map.rootId) {
       const empty = root.createDiv({ cls: "kdh-empty" });
       empty.createEl("h2", { text: "Start a decision map" });
-      empty.createEl("p", { text: "Begin with the decision, then add options with their benefits and drawbacks." });
+      empty.createEl("p", { text: "Begin with the decision, then add options with their benefits and risks." });
       empty.createEl("button", { text: "Enter decision", cls: "mod-cta" })
         .addEventListener("click", () => this.promptForDecision());
       return;
@@ -763,6 +751,10 @@ class DecisionMapView extends TextFileView {
     this.updateToolbar();
     this.installNavigation(scroller, canvas);
     scroller.addEventListener("contextmenu", (event) => {
+      if (Date.now() < this.touchSuppressUntil) {
+        event.preventDefault();
+        return;
+      }
       if (event.target.closest(".kdh-node, .kdh-edge-label")) return;
       this.showBackgroundMenu(event);
     });
@@ -782,15 +774,7 @@ class DecisionMapView extends TextFileView {
     requestAnimationFrame(() => {
       if (!scroller.isConnected) return;
       const positioned = [...layout.positions.values()];
-      const anchor = this.pendingViewportAnchor;
-      this.pendingViewportAnchor = null;
-      if (anchor && layout.positions.has(anchor.id)) {
-        const anchorPosition = layout.positions.get(anchor.id);
-        scroller.scrollLeft = Math.max(0, anchorPosition.x * zoom - anchor.screenX);
-        scroller.scrollTop = Math.max(0, anchorPosition.y * zoom - anchor.screenY);
-        this.map.scrollLeft = scroller.scrollLeft;
-        this.map.scrollTop = scroller.scrollTop;
-      } else if (this.map.fitOnOpen && positioned.length > 1) {
+      if (this.map.fitOnOpen && positioned.length > 1) {
         const minX = Math.min(...positioned.map((item) => item.x));
         const maxX = Math.max(...positioned.map((item) => item.x + CARD_WIDTH));
         const minY = Math.min(...positioned.map((item) => item.y));
@@ -915,19 +899,18 @@ class DecisionMapView extends TextFileView {
     const options = this.rankedTopLevelOptions();
 
     if (!options.length) {
-      content.createDiv({ cls: "kdh-summary-empty", text: "Rate benefits and drawbacks to compare the options." });
+      content.createDiv({ cls: "kdh-summary-empty", text: "Rate benefits and risks to compare the options." });
     } else {
       const eligible = options.filter((entry) => entry.totals.score !== null && !entry.totals.disqualified);
       const leader = eligible[0] || options[0];
       const tied = eligible.filter((entry) => entry.totals.score === leader?.totals.score);
       const isTie = tied.length > 1;
       const needsMoreInfo = !eligible.length;
-      const allNegative = !needsMoreInfo && !isTie && leader.totals.score < 0;
-      content.createDiv({ cls: "kdh-summary-label", text: needsMoreInfo ? "Not evaluated" : (isTie ? "Tie" : (allNegative ? "No favorable option found" : "Recommended option")) });
+      content.createDiv({ cls: "kdh-summary-label", text: needsMoreInfo ? "Not evaluated" : (isTie ? "Tie" : "Current leader") });
       if (needsMoreInfo) {
-        content.createDiv({ cls: "kdh-summary-empty", text: "Add at least one benefit or drawback to an option." });
+        content.createDiv({ cls: "kdh-summary-empty", text: "Add at least one benefit or risk to an option." });
       } else {
-        content.createDiv({ cls: "kdh-summary-leading", text: isTie ? tied.map((entry) => entry.node.text).join(" · ") : (allNegative ? `Best evaluated: ${leader.node.text}` : leader.node.text) });
+        content.createDiv({ cls: "kdh-summary-leading", text: isTie ? tied.map((entry) => entry.node.text).join(" · ") : leader.node.text });
         content.createDiv({
           cls: `kdh-summary-simple-result${leader.totals.score < 0 ? " is-negative" : ""}`,
           text: `${this.scoreDescription(leader.totals.score)} · ${leader.totals.score >= 0 ? "+" : ""}${leader.totals.score}`,
@@ -940,13 +923,7 @@ class DecisionMapView extends TextFileView {
       const warning = this.importantWarning(options, leader, needsMoreInfo);
       if (warning) {
         content.createDiv({ cls: "kdh-summary-label kdh-warning-label", text: "Check before deciding" });
-        content.createDiv({
-          cls: "kdh-summary-warning",
-          text: warning.text,
-          attr: warning.details ? {
-            title: warning.details,
-          } : {},
-        });
+        content.createDiv({ cls: "kdh-summary-warning", text: warning });
       }
     }
 
@@ -1038,7 +1015,7 @@ class DecisionMapView extends TextFileView {
   renderOptionComparisonChart(content, options, selected, leader, needsMoreInfo, tiedIds = new Set()) {
     const chart = content.createDiv({ cls: "kdh-comparison-chart" });
     const legend = chart.createDiv({ cls: "kdh-comparison-legend" });
-    legend.createSpan({ cls: "is-risk", text: "Drawbacks" });
+    legend.createSpan({ cls: "is-risk", text: "Risks" });
     legend.createSpan({ text: "0" });
     legend.createSpan({ cls: "is-benefit", text: "Benefits" });
 
@@ -1070,31 +1047,13 @@ class DecisionMapView extends TextFileView {
   }
 
   importantWarning(options, leader, needsMoreInfo) {
-    if (leader.totals.disqualifyingRisk) {
-      const blocked = options
-        .filter((entry) => entry.totals.disqualified)
-        .map((entry) => `${entry.node.text} — ${entry.totals.disqualifyingRisk?.text || "deal-breaker"}`);
-      return {
-        text: `Every current path is blocked by a deal-breaker. ${leader.totals.disqualifyingRisk.text}`,
-        details: blocked.length ? `Blocked options:\n${blocked.join("\n")}` : null,
-      };
-    }
-    if (needsMoreInfo) return { text: "No option has enough information to calculate a score.", details: "Add at least one rated benefit or drawback to an option." };
-    const unevaluated = options.filter((entry) => entry.totals.score === null).map((entry) => entry.node.text);
-    if (unevaluated.length) return {
-      text: "Some options are not evaluated and were excluded from the comparison.",
-      details: `Not evaluated:\n${unevaluated.join("\n")}`,
-    };
+    if (leader.totals.disqualifyingRisk) return `Every current path is blocked by a deal-breaker. ${leader.totals.disqualifyingRisk.text}`;
+    if (needsMoreInfo) return "No option has enough information to calculate a score.";
+    if (options.some((entry) => entry.totals.score === null)) return "Some options are not evaluated and were excluded from the comparison.";
     if (this.map.showWarnings === false) return null;
-    const limited = options
-      .filter((entry) => !entry.totals.disqualified && entry.totals.score !== null && (entry.totals.allRated ?? entry.totals.rated) < 2)
-      .map((entry) => entry.node.text);
-    if (limited.length) return {
-      text: "Limited evidence: Some options are based on fewer than two factors. Their scores are comparable, but may be less reliable.",
-      details: `Limited evidence:\n${limited.join("\n")}`,
-    };
+    if (options.some((entry) => (entry.totals.allRated ?? entry.totals.rated) < 2)) return "Limited evidence: Some options are based on fewer than two factors. Their scores are comparable, but may be less reliable.";
     const sensitivity = this.findSensitivity(leader.node.id);
-    if (sensitivity) return { text: sensitivity, details: "This warning identifies the exact factor and rating change that could change the recommendation." };
+    if (sensitivity) return sensitivity;
     return null;
   }
 
@@ -1142,7 +1101,7 @@ class DecisionMapView extends TextFileView {
     if (node.type === "option") {
       const totals = this.totalsForOption(node);
       if (!totals) {
-        content.createDiv({ cls: "kdh-summary-empty", text: "Add benefits and drawbacks to evaluate this option." });
+        content.createDiv({ cls: "kdh-summary-empty", text: "Add benefits and risks to evaluate this option." });
         return;
       }
       this.addSummaryMetrics(content, totals);
@@ -1157,7 +1116,7 @@ class DecisionMapView extends TextFileView {
     const scoreRow = content.createDiv({ cls: `kdh-selected-factor-score is-${node.type}` });
     scoreRow.createSpan({ text: `${node.type === "benefit" ? "+" : "−"}${score}` });
     scoreRow.createSpan({ cls: "kdh-selected-factor-formula", text: `Likelihood ${node.likelihood} × impact ${node.impact}` });
-    if (node.type === "risk" && node.isConstraint) content.createDiv({ cls: "kdh-summary-constraint", text: "This drawback is a deal-breaker." });
+    if (node.type === "risk" && node.isConstraint) content.createDiv({ cls: "kdh-summary-constraint", text: "This risk is a deal-breaker." });
   }
 
   addSummaryMetrics(content, totals) {
@@ -1171,7 +1130,7 @@ class DecisionMapView extends TextFileView {
     grid.createDiv({ cls: `is-complete${completeness < 100 ? " is-incomplete" : ""}`, text: `${ratedForConfidence}/${totalFactors} rated` });
     if (totals.highestRisk) {
       const risk = content.createDiv({ cls: "kdh-summary-risk" });
-      risk.createSpan({ text: `Highest drawback −${totals.highestRisk.score}: ` });
+      risk.createSpan({ text: `Highest risk −${totals.highestRisk.score}: ` });
       risk.createSpan({ cls: "kdh-summary-risk-text", text: totals.highestRisk.text });
     }
     if (totals.disqualifyingRisk) content.createDiv({ cls: "kdh-summary-constraint", text: `Deal-breaker: ${totals.disqualifyingRisk.text}` });
@@ -1247,33 +1206,28 @@ class DecisionMapView extends TextFileView {
   rememberViewport() {
     this.map.scrollLeft = this.currentScroller?.scrollLeft ?? this.map.scrollLeft;
     this.map.scrollTop = this.currentScroller?.scrollTop ?? this.map.scrollTop;
-    const zoom = this.map.zoom || 1;
-    const anchorId = this.map.selectedId || this.map.rootId;
-    const position = this.nodePositions?.get(anchorId);
-    if (position && this.currentScroller) {
-      this.pendingViewportAnchor = {
-        id: anchorId,
-        screenX: position.x * zoom - this.currentScroller.scrollLeft,
-        screenY: position.y * zoom - this.currentScroller.scrollTop,
-      };
-    }
   }
 
   installLongPress(element, action) {
     let timer = null;
-    let start = null;
-    const cancel = () => { clearTimeout(timer); timer = null; start = null; };
+    let pointerId = null;
+    const cancel = () => { clearTimeout(timer); timer = null; pointerId = null; };
+    this.longPressCancellers.add(cancel);
     element.addEventListener("pointerdown", (event) => {
       if (event.pointerType !== "touch") return;
-      start = { x: event.clientX, y: event.clientY };
+      cancel();
+      if (this.touchGestureMulti || this.touchPointers.size !== 1 || Date.now() < this.touchSuppressUntil) return;
+      pointerId = event.pointerId;
       timer = setTimeout(() => {
         timer = null;
+        if (this.touchGestureMoved || this.touchGestureMulti || this.touchPointers.size !== 1 || !this.touchPointers.has(pointerId)) return;
+        this.touchSuppressUntil = Date.now() + 500;
         action(event);
         if (navigator.vibrate) navigator.vibrate(30);
       }, 600);
     });
     element.addEventListener("pointermove", (event) => {
-      if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 10) cancel();
+      if (event.pointerId === pointerId && this.touchGestureMoved) cancel();
     });
     element.addEventListener("pointerup", cancel);
     element.addEventListener("pointercancel", cancel);
@@ -1362,7 +1316,7 @@ class DecisionMapView extends TextFileView {
 
   addChild(parent, suggestedType = null) {
     if (parent.type !== "decision" && parent.type !== "option") {
-      new Notice("Benefits and drawbacks are final scoring factors and cannot have children.");
+      new Notice("Benefits and risks are final scoring factors and cannot have children.");
       return;
     }
     const defaultType = suggestedType || (parent.type === "option" ? "benefit" : "option");
@@ -1392,7 +1346,7 @@ class DecisionMapView extends TextFileView {
       heading: node.parentId ? "Edit item" : "Edit decision",
       text: node.text,
       type: node.type,
-      relationship: this.displayRelationship(node),
+      relationship: node.relationship,
       likelihood: node.likelihood,
       impact: node.impact,
       isConstraint: node.isConstraint,
@@ -1411,7 +1365,7 @@ class DecisionMapView extends TextFileView {
   }
 
   editRelationship(node) {
-    new RelationshipModal(this.app, this.displayRelationship(node), async (value) => {
+    new RelationshipModal(this.app, node.relationship, async (value) => {
       this.recordHistory();
       node.relationship = value;
       await this.saveMap();
@@ -1427,7 +1381,9 @@ class DecisionMapView extends TextFileView {
       this.renderSummaryContent();
       this.saveMap();
     }
+    this.activeMenu?.hide?.();
     const menu = new Menu();
+    this.activeMenu = menu;
     if (node.type === "decision" || node.type === "option") {
       menu.addItem((item) => item.setTitle("Add connected item").setIcon("plus").onClick(() => this.addChild(node)));
     }
@@ -1461,8 +1417,6 @@ class DecisionMapView extends TextFileView {
 
   async deleteBranch(node) {
     if (this.plugin.settings.confirmDelete && !window.confirm(`Delete “${node.text}” and everything beneath it? This can be undone.`)) return;
-    const parent = this.getNode(node.parentId);
-    if (parent) this.map.selectedId = parent.id;
     this.rememberViewport();
     this.recordHistory();
     const ids = new Set();
@@ -1474,6 +1428,7 @@ class DecisionMapView extends TextFileView {
       }
     };
     collect(node);
+    const parent = this.getNode(node.parentId);
     if (parent) parent.childIds = parent.childIds.filter((id) => id !== node.id);
     this.map.nodes = this.map.nodes.filter((item) => !ids.has(item.id));
     await this.saveMap();
@@ -1515,7 +1470,7 @@ class DecisionMapView extends TextFileView {
     } else if (event.key === "Tab") {
       event.preventDefault();
       if (selected.type === "decision" || selected.type === "option") this.addChild(selected, "option");
-    } else if (["d", "r"].includes(event.key.toLowerCase()) && selected.type === "option") {
+    } else if (event.key.toLowerCase() === "d" && selected.type === "option") {
       event.preventDefault();
       this.addChild(selected, "risk");
     } else if (event.key.toLowerCase() === "b" && selected.type === "option") {
@@ -1683,7 +1638,9 @@ class DecisionMapView extends TextFileView {
 
   showBackgroundMenu(event) {
     event.preventDefault();
+    this.activeMenu?.hide?.();
     const menu = new Menu();
+    this.activeMenu = menu;
     menu.addItem((item) => {
       item.setTitle("Layout").setIcon("layout-template");
       const submenu = item.setSubmenu();
@@ -1726,354 +1683,15 @@ class DecisionMapView extends TextFileView {
       submenu.addItem((subitem) => subitem.setTitle("Markdown report").onClick(() => this.exportMarkdown()));
       submenu.addItem((subitem) => subitem.setTitle("JSON backup").onClick(() => this.exportJson()));
       submenu.addSeparator();
-      submenu.addItem((subitem) => subitem.setTitle("SVG image").onClick(() => this.exportVisual("svg")));
-      submenu.addItem((subitem) => subitem.setTitle("JPG image").onClick(() => this.exportVisual("jpg")));
-      submenu.addItem((subitem) => subitem.setTitle("PDF document").onClick(() => this.exportVisual("pdf")));
+      submenu.addItem((subitem) => subitem.setTitle("SVG image").onClick(() => this.exportSvg()));
+      submenu.addItem((subitem) => subitem.setTitle("JPG image").onClick(() => this.exportJpg()));
+      submenu.addItem((subitem) => subitem.setTitle("PDF document").onClick(() => this.exportPdf()));
     });
-    menu.addItem((item) => {
-      item.setTitle("Import").setIcon("upload");
-      const submenu = item.setSubmenu();
-      submenu.addItem((subitem) => subitem.setTitle("JSON backup").onClick(() => this.importJson()));
-    });
+    menu.addItem((item) => item
+      .setTitle("Import JSON backup")
+      .setIcon("upload")
+      .onClick(() => this.importJson()));
     menu.showAtMouseEvent(event);
-  }
-
-  displayRelationship(node) {
-    const value = String(node?.relationship || "").trim();
-    if (node?.type === "risk" && /^(risk|risks)$/i.test(value)) return "Drawback";
-    return value || DEFAULT_RELATIONSHIPS[node?.type] || NODE_TYPES[node?.type]?.label || "Related";
-  }
-
-  exportBaseName() {
-    const root = this.getNode(this.map.rootId);
-    return (root?.text || "decision-map")
-      .replace(/[<>:"/\\|?*\x00-\x1F]/g, "")
-      .trim()
-      .slice(0, 60)
-      .replace(/[. ]+$/g, "") || "decision-map";
-  }
-
-  async saveExternalFile(data, suggestedName, description, extensions, mimeType, title) {
-    const blob = data instanceof Blob ? data : new Blob([data], { type: mimeType });
-    try {
-      if (typeof window.showSaveFilePicker === "function") {
-        const handle = await window.showSaveFilePicker({
-          suggestedName,
-          types: [{ description, accept: { [mimeType]: extensions } }],
-        });
-        const writable = await handle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-        return true;
-      }
-    } catch (error) {
-      if (error?.name === "AbortError") return false;
-    }
-    try {
-      const electron = require("electron");
-      const dialog = electron.remote?.dialog;
-      const currentWindow = electron.remote?.getCurrentWindow?.();
-      if (!dialog) throw new Error("System save dialog is unavailable");
-      const result = await dialog.showSaveDialog(currentWindow, {
-        title,
-        defaultPath: suggestedName,
-        filters: [{ name: description, extensions: extensions.map((extension) => extension.replace(/^\./, "")) }],
-      });
-      if (result.canceled || !result.filePath) return false;
-      await require("fs").promises.writeFile(result.filePath, require("buffer").Buffer.from(await blob.arrayBuffer()));
-      return true;
-    } catch (error) {
-      console.error("Decision Helper export failed", error);
-      new Notice("The system Save As dialog could not be opened on this device.");
-      return false;
-    }
-  }
-
-  buildJsonExport() {
-    return JSON.stringify({
-      ksdhBackupFormat: 1,
-      dataFormat: FORMAT_VERSION,
-      exportedAt: new Date().toISOString(),
-      map: { ...this.map, formatVersion: FORMAT_VERSION },
-    }, null, 2);
-  }
-
-  parseJsonImport(text) {
-    const parsed = JSON.parse(text);
-    if (parsed?.ksdhBackupFormat !== 1 || !parsed?.map) throw new Error("This is not a Decision Helper JSON backup");
-    return this.validateImportedMap(parsed.map);
-  }
-
-  validateImportedMap(parsed) {
-    if (!parsed?.rootId || !Array.isArray(parsed.nodes)) throw new Error("Decision structure is missing");
-    const ids = new Set(parsed.nodes.map((node) => node.id));
-    const root = parsed.nodes.find((node) => node.id === parsed.rootId);
-    const decisionNodes = parsed.nodes.filter((node) => node?.type === "decision");
-    if (!root || root.type !== "decision" || root.parentId != null || decisionNodes.length !== 1 || ids.size !== parsed.nodes.length || parsed.nodes.some((node) => !node?.id)) throw new Error("Decision structure is invalid");
-    const byId = new Map(parsed.nodes.map((node) => [node.id, node]));
-    for (const node of parsed.nodes) {
-      if (!NODE_TYPES[node.type] || !Array.isArray(node.childIds) || node.childIds.some((id) => !ids.has(id))) throw new Error("A node or connection is invalid");
-      if (node.id !== parsed.rootId) {
-        const parent = byId.get(node.parentId);
-        if (!parent || !parent.childIds.includes(node.id) || (parent.type !== "decision" && parent.type !== "option") || (parent.type === "decision" && node.type !== "option")) throw new Error("A parent connection is invalid");
-      }
-    }
-    const visited = new Set();
-    const visiting = new Set();
-    const walk = (node) => {
-      if (visiting.has(node.id)) throw new Error("The imported tree contains a circular branch");
-      if (visited.has(node.id)) return;
-      visiting.add(node.id);
-      node.childIds.forEach((id) => walk(byId.get(id)));
-      visiting.delete(node.id);
-      visited.add(node.id);
-    };
-    walk(root);
-    if (visited.size !== parsed.nodes.length) throw new Error("The imported tree contains disconnected nodes");
-    return { ...emptyMap(), ...parsed, formatVersion: FORMAT_VERSION };
-  }
-
-  async exportJson() {
-    const json = this.buildJsonExport();
-    try {
-      const verified = this.parseJsonImport(json);
-      if (verified.rootId !== this.map.rootId || verified.nodes.length !== this.map.nodes.length) throw new Error("Export verification mismatch");
-    } catch (error) {
-      console.error("Decision Helper JSON verification failed", error);
-      new Notice("JSON export stopped because the backup could not be verified.");
-      return;
-    }
-    if (await this.saveExternalFile(json, `${this.exportBaseName()}.json`, "JSON backup", [".json"], "application/json", "Export Decision Helper JSON backup")) {
-      new Notice("JSON backup exported.");
-    }
-  }
-
-  async applyJsonImport(text) {
-    let imported;
-    try {
-      imported = this.parseJsonImport(text);
-    } catch (error) {
-      new Notice(`Import failed: ${error.message}`);
-      return;
-    }
-    if (!window.confirm("Replace this decision with the JSON backup? You can undo this change.")) return;
-    this.rememberViewport();
-    this.recordHistory();
-    this.map = { ...imported, selectedId: imported.rootId, scrollLeft: null, scrollTop: null };
-    this.unreadableData = null;
-    this.loadError = null;
-    await this.saveMap();
-    this.render();
-    new Notice("Decision imported from JSON.");
-  }
-
-  async importJson() {
-    try {
-      if (typeof window.showOpenFilePicker === "function") {
-        const [handle] = await window.showOpenFilePicker({ types: [{ description: "JSON backup", accept: { "application/json": [".json"] } }], multiple: false });
-        const file = await handle.getFile();
-        await this.applyJsonImport(await file.text());
-        return;
-      }
-    } catch (error) {
-      if (error?.name === "AbortError") return;
-    }
-    try {
-      const electron = require("electron");
-      const dialog = electron.remote?.dialog;
-      const currentWindow = electron.remote?.getCurrentWindow?.();
-      if (!dialog) throw new Error("System file dialog is unavailable");
-      const result = await dialog.showOpenDialog(currentWindow, { title: "Import Decision Helper JSON", properties: ["openFile"], filters: [{ name: "JSON", extensions: ["json"] }] });
-      if (result.canceled || !result.filePaths?.[0]) return;
-      await this.applyJsonImport(await require("fs").promises.readFile(result.filePaths[0], "utf8"));
-    } catch (error) {
-      console.error("Decision Helper JSON import failed", error);
-      new Notice("The JSON backup could not be imported on this device.");
-    }
-  }
-
-  xmlText(value) {
-    return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  }
-
-  wrapSvgText(value, max = 28, lines = 3) {
-    const words = String(value || "").trim().split(/\s+/);
-    const output = [];
-    let current = "";
-    for (const word of words) {
-      const next = current ? `${current} ${word}` : word;
-      if (next.length > max && current) {
-        output.push(current);
-        current = word;
-      } else current = next;
-    }
-    if (current) output.push(current);
-    if (output.length > lines) {
-      output.length = lines;
-      output[lines - 1] = `${output[lines - 1].slice(0, Math.max(1, max - 1))}…`;
-    }
-    return output;
-  }
-
-  buildSvgExport() {
-    const layout = this.calculateLayout();
-    const positions = layout.positions;
-    const values = [...positions.values()];
-    if (!values.length) throw new Error("There is no decision map to export");
-    const margin = 70;
-    const minX = Math.min(...values.map((p) => p.x)) - margin;
-    const minY = Math.min(...values.map((p) => p.y)) - margin;
-    const maxX = Math.max(...values.map((p) => p.x + CARD_WIDTH)) + margin;
-    const maxY = Math.max(...values.map((p) => p.y + CARD_HEIGHT + (this.map.showScoreLabels === false ? 0 : SCORE_FOOTER_HEIGHT))) + margin;
-    const width = Math.ceil(maxX - minX);
-    const height = Math.ceil(maxY - minY);
-    const direction = this.map.layout || "down";
-    const light = this.map.background === "light" || (this.map.background === "system" && document.body.classList.contains("theme-light"));
-    const colors = light
-      ? { bg: "#f7f8fa", card: "#ffffff", text: "#20242a", muted: "#5d6570", line: "#69717c", border: "#d3d8df" }
-      : { bg: "#17191c", card: "#22252a", text: "#e7e9ec", muted: "#a8aeb7", line: "#a8aeb7", border: "#3b4048" };
-    const accent = light
-      ? { decision: "#6546d8", option: "#236f9f", benefit: "#287a32", risk: "#9a3030" }
-      : { decision: "#7c5cff", option: "#3b91c8", benefit: "#58a85d", risk: "#c85c5c" };
-    const parts = [`<?xml version="1.0" encoding="UTF-8"?>`, `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`, `<rect width="100%" height="100%" fill="${colors.bg}"/>`];
-    const point = (position) => ({ x: position.x - minX, y: position.y - minY });
-    for (const node of this.map.nodes) {
-      if (!node.parentId) continue;
-      const parentRaw = positions.get(node.parentId);
-      const childRaw = positions.get(node.id);
-      if (!parentRaw || !childRaw) continue;
-      const parent = point(parentRaw);
-      const child = point(childRaw);
-      let x1; let y1; let x2; let y2;
-      if (direction === "up") { x1 = parent.x + CARD_WIDTH / 2; y1 = parent.y; x2 = child.x + CARD_WIDTH / 2; y2 = child.y + CARD_HEIGHT; }
-      else if (direction === "right") { x1 = parent.x + CARD_WIDTH; y1 = parent.y + CARD_HEIGHT / 2; x2 = child.x; y2 = child.y + CARD_HEIGHT / 2; }
-      else if (direction === "left") { x1 = parent.x; y1 = parent.y + CARD_HEIGHT / 2; x2 = child.x + CARD_WIDTH; y2 = child.y + CARD_HEIGHT / 2; }
-      else { x1 = parent.x + CARD_WIDTH / 2; y1 = parent.y + CARD_HEIGHT; x2 = child.x + CARD_WIDTH / 2; y2 = child.y; }
-      const horizontal = direction === "right" || direction === "left";
-      const mx = (x1 + x2) / 2; const my = (y1 + y2) / 2;
-      const path = horizontal ? `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}` : `M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`;
-      parts.push(`<path d="${path}" fill="none" stroke="${colors.line}" stroke-width="2" stroke-linecap="round"/>`);
-      const label = this.displayRelationship(node);
-      const lx = mx; const ly = my;
-      const labelWidth = Math.max(54, Math.min(150, label.length * 7 + 18));
-      parts.push(`<rect x="${lx - labelWidth / 2}" y="${ly - 12}" width="${labelWidth}" height="22" rx="11" fill="${colors.bg}" stroke="${colors.border}"/>`);
-      parts.push(`<text x="${lx}" y="${ly + 3}" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" font-weight="600" fill="${colors.text}">${this.xmlText(label)}</text>`);
-    }
-    for (const node of this.map.nodes) {
-      const raw = positions.get(node.id);
-      if (!raw) continue;
-      const p = point(raw);
-      const color = accent[node.type] || accent.option;
-      parts.push(`<rect x="${p.x}" y="${p.y}" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" rx="12" fill="${colors.card}" stroke="${node.type === "decision" ? color : colors.border}" stroke-width="${node.type === "decision" ? 3 : 1}"/>`);
-      parts.push(`<rect x="${p.x}" y="${p.y}" width="6" height="${CARD_HEIGHT}" rx="3" fill="${color}"/>`);
-      parts.push(`<text x="${p.x + CARD_WIDTH / 2}" y="${p.y + 17}" text-anchor="middle" font-family="Arial,sans-serif" font-size="9" font-weight="700" letter-spacing="1" fill="${color}">${this.xmlText(NODE_TYPES[node.type]?.label?.toUpperCase() || node.type.toUpperCase())}</text>`);
-      const lines = this.wrapSvgText(node.text);
-      const firstY = p.y + 45 - ((lines.length - 1) * 8);
-      parts.push(`<text x="${p.x + CARD_WIDTH / 2}" y="${firstY}" text-anchor="middle" font-family="Arial,sans-serif" font-size="13" font-weight="600" fill="${colors.text}">`);
-      lines.forEach((line, index) => parts.push(`<tspan x="${p.x + CARD_WIDTH / 2}" dy="${index ? 17 : 0}">${this.xmlText(line)}</tspan>`));
-      parts.push(`</text>`);
-      if (node.type === "risk" && node.isConstraint) parts.push(`<text x="${p.x + CARD_WIDTH - 10}" y="${p.y + 17}" text-anchor="end" font-family="Arial,sans-serif" font-size="16" font-weight="800" fill="#dc5c5c">×</text>`);
-      if (this.map.showScoreLabels !== false) {
-        let scoreText = "";
-        let scoreColor = colors.muted;
-        if (node.type === "benefit" || node.type === "risk") {
-          const score = this.scoreForNode(node);
-          scoreText = score === null ? "Not evaluated" : `${node.type === "benefit" ? "+" : "−"}${score} · Likely ${node.likelihood} · Impact ${node.impact}`;
-          scoreColor = node.type === "benefit" ? accent.benefit : accent.risk;
-        } else if (node.type === "option") {
-          const totals = this.totalsForOption(node);
-          scoreText = !totals || totals.score === null ? "Not evaluated" : (totals.disqualified ? "Blocked by deal-breaker" : `${this.scoreDescription(totals.score)} · ${totals.score >= 0 ? "+" : ""}${totals.score}`);
-          scoreColor = totals?.disqualified || totals?.score < 0 ? accent.risk : accent.benefit;
-        } else if (node.type === "decision") {
-          const totals = this.totalsForDecision();
-          scoreText = totals ? `${totals.tiedOptions?.length > 1 ? "Tie" : "Recommended"}: ${totals.tiedOptions?.length > 1 ? totals.tiedOptions.map((item) => item.text).join(" · ") : totals.chosenOption?.text}` : "Not evaluated";
-          scoreColor = totals?.score < 0 ? accent.risk : accent.option;
-        }
-        if (scoreText) {
-          parts.push(`<rect x="${p.x + 10}" y="${p.y + CARD_HEIGHT + 7}" width="${CARD_WIDTH - 20}" height="30" rx="7" fill="${colors.card}" stroke="${colors.border}"/>`);
-          parts.push(`<text x="${p.x + CARD_WIDTH / 2}" y="${p.y + CARD_HEIGHT + 26}" text-anchor="middle" font-family="Arial,sans-serif" font-size="10" font-weight="700" fill="${scoreColor}">${this.xmlText(scoreText.length > 38 ? `${scoreText.slice(0, 37)}…` : scoreText)}</text>`);
-        }
-      }
-    }
-    parts.push(`</svg>`);
-    return { svg: parts.join(""), width, height };
-  }
-
-  async svgToJpeg(svg, width, height) {
-    const scale = Math.min(2, 12000 / Math.max(width, height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(width * scale));
-    canvas.height = Math.max(1, Math.round(height * scale));
-    const context = canvas.getContext("2d");
-    const blob = new Blob([svg], { type: "image/svg+xml" });
-    const url = URL.createObjectURL(blob);
-    try {
-      const image = await new Promise((resolve, reject) => {
-        const element = new Image();
-        element.onload = () => resolve(element);
-        element.onerror = reject;
-        element.src = url;
-      });
-      context.fillStyle = this.map.background === "light" ? "#f7f8fa" : "#17191c";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      const jpeg = await new Promise((resolve, reject) => canvas.toBlob((result) => result ? resolve(result) : reject(new Error("JPG conversion failed")), "image/jpeg", 0.92));
-      return { blob: jpeg, width: canvas.width, height: canvas.height };
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-  }
-
-  async jpegToPdf(jpegBlob, imageWidth, imageHeight) {
-    const jpeg = new Uint8Array(await jpegBlob.arrayBuffer());
-    const encoder = new TextEncoder();
-    const pageWidth = 792; const pageHeight = 612; const margin = 24;
-    const scale = Math.min((pageWidth - margin * 2) / imageWidth, (pageHeight - margin * 2) / imageHeight);
-    const drawWidth = imageWidth * scale; const drawHeight = imageHeight * scale;
-    const x = (pageWidth - drawWidth) / 2; const y = (pageHeight - drawHeight) / 2;
-    const content = `q\n${drawWidth.toFixed(2)} 0 0 ${drawHeight.toFixed(2)} ${x.toFixed(2)} ${y.toFixed(2)} cm\n/Im0 Do\nQ\n`;
-    const objects = [
-      encoder.encode("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"),
-      encoder.encode("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"),
-      encoder.encode(`3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\nendobj\n`),
-      [encoder.encode(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imageWidth} /Height ${imageHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`), jpeg, encoder.encode("\nendstream\nendobj\n")],
-      encoder.encode(`5 0 obj\n<< /Length ${content.length} >>\nstream\n${content}endstream\nendobj\n`),
-    ];
-    const chunks = [encoder.encode("%PDF-1.4\n%KSDH\n")];
-    const offsets = [0];
-    let length = chunks[0].length;
-    for (const object of objects) {
-      offsets.push(length);
-      const pieces = Array.isArray(object) ? object : [object];
-      chunks.push(...pieces);
-      length += pieces.reduce((sum, piece) => sum + piece.length, 0);
-    }
-    const xrefOffset = length;
-    let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-    for (let index = 1; index <= objects.length; index += 1) xref += `${String(offsets[index]).padStart(10, "0")} 00000 n \n`;
-    xref += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-    chunks.push(encoder.encode(xref));
-    return new Blob(chunks, { type: "application/pdf" });
-  }
-
-  async exportVisual(format) {
-    try {
-      const { svg, width, height } = this.buildSvgExport();
-      if (format === "svg") {
-        if (await this.saveExternalFile(svg, `${this.exportBaseName()}.svg`, "SVG image", [".svg"], "image/svg+xml", "Export decision map as SVG")) new Notice("SVG exported.");
-        return;
-      }
-      const jpeg = await this.svgToJpeg(svg, width, height);
-      if (format === "jpg") {
-        if (await this.saveExternalFile(jpeg.blob, `${this.exportBaseName()}.jpg`, "JPG image", [".jpg", ".jpeg"], "image/jpeg", "Export decision map as JPG")) new Notice("JPG exported.");
-        return;
-      }
-      const pdf = await this.jpegToPdf(jpeg.blob, jpeg.width, jpeg.height);
-      if (await this.saveExternalFile(pdf, `${this.exportBaseName()}.pdf`, "PDF document", [".pdf"], "application/pdf", "Export decision map as PDF")) new Notice("PDF exported.");
-    } catch (error) {
-      console.error(`Decision Helper ${format.toUpperCase()} export failed`, error);
-      new Notice(`${format.toUpperCase()} export failed.`);
-    }
   }
 
   markdownText(value) {
@@ -2096,7 +1714,7 @@ class DecisionMapView extends TextFileView {
     if (totals.chosenOption) lines.push(`${pad}- Best path: ${this.markdownText(totals.chosenOption.text)}`);
     if (totals.combinedOptions?.length) lines.push(`${pad}- All Paths components: ${totals.combinedOptions.map((item) => this.markdownText(item.text)).join(", ")}`);
     if (totals.disqualifyingRisk) lines.push(`${pad}- Disqualified by deal-breaker: ${this.markdownText(totals.disqualifyingRisk.text)}`);
-    if (totals.highestRisk) lines.push(`${pad}- Highest drawback: −${totals.highestRisk.score} — ${this.markdownText(totals.highestRisk.text)}`);
+    if (totals.highestRisk) lines.push(`${pad}- Highest risk: −${totals.highestRisk.score} — ${this.markdownText(totals.highestRisk.text)}`);
     if (unrated) lines.push(`${pad}- Unrated factors: ${unrated}`);
     return lines;
   }
@@ -2110,6 +1728,8 @@ class DecisionMapView extends TextFileView {
       "",
       "## Decision summary",
       "",
+      "Scores use `(benefits − risks) ÷ (rated factors × 25) × 100`. Benefits and risks use `likelihood × impact`. Option nodes specify whether sub-options use a Single Path or All Paths. Deal-breaker risks disqualify their path.",
+      "",
     ];
     if (decisionTotals) {
       if (decisionTotals.tiedOptions?.length > 1) lines.push(`- Result: Tie — ${decisionTotals.tiedOptions.map((item) => this.markdownText(item.text)).join(", ")}`);
@@ -2119,17 +1739,7 @@ class DecisionMapView extends TextFileView {
       lines.push("- Recommendation: Not enough rated information");
     }
 
-    lines.push(
-      "",
-      "## How the scores work",
-      "",
-      "`Option score = ((Total benefits − Total drawbacks) ÷ (Rated factors × 25)) × 100`",
-      "",
-      "Each benefit and drawback uses `Likelihood × Impact`. Scores range from −100 to +100. A deal-breaker makes its option path unacceptable regardless of the numerical score.",
-      "",
-      "## Options and factors",
-      "",
-    );
+    lines.push("", "## Options and factors", "");
     const visited = new Set();
     const writeNode = (node, depth) => {
       if (!node || visited.has(node.id)) return;
@@ -2137,7 +1747,7 @@ class DecisionMapView extends TextFileView {
       const pad = "  ".repeat(depth);
       const type = NODE_TYPES[node.type]?.label || node.type;
       lines.push(`${pad}- **${type}:** ${this.markdownText(node.text)}`);
-      if (node.parentId) lines.push(`${pad}  - Connection label: ${this.markdownText(this.displayRelationship(node))}`);
+      if (node.parentId) lines.push(`${pad}  - Connection label: ${this.markdownText(node.relationship || DEFAULT_RELATIONSHIPS[node.type] || "Related to")}`);
       if (node.type === "benefit" || node.type === "risk") {
         const factorScore = this.scoreForNode(node);
         lines.push(`${pad}  - Likelihood: ${node.likelihood}`);
@@ -2155,7 +1765,7 @@ class DecisionMapView extends TextFileView {
     };
     writeNode(root, 0);
 
-    lines.push("");
+    lines.push("", "---", "", `Report created ${new Date().toLocaleString()}.`, "");
     return lines.join("\n");
   }
 
@@ -2163,50 +1773,409 @@ class DecisionMapView extends TextFileView {
     const root = this.getNode(this.map.rootId);
     if (!root) return;
     const markdown = this.buildMarkdownExport();
-    const missingNode = this.map.nodes.find((node) => !markdown.includes(this.markdownText(node.text)));
-    if (missingNode) {
-      console.error("Decision Helper report verification failed", missingNode.id);
+    if (this.map.nodes.some((node) => !markdown.includes(this.markdownText(node.text)))) {
       new Notice("Export stopped because the report could not be verified.");
       return;
     }
-    const baseName = root.text
+    if (await this.saveExportFile(markdown, `${this.exportBaseName()}.md`, "text/markdown", "Markdown", ["md"])) {
+      new Notice("Markdown report exported.");
+    }
+  }
+
+  exportBaseName() {
+    const root = this.getNode(this.map.rootId);
+    return (root?.text || "decision-map")
       .replace(/[<>:"/\\|?*\x00-\x1F]/g, "")
+      .replace(/[. ]+$/g, "")
       .trim()
       .slice(0, 60) || "decision-map";
-    const suggestedName = `${baseName}.md`;
+  }
 
+  async saveExportFile(data, suggestedName, mime, label, extensions) {
+    const blob = data instanceof Blob ? data : new Blob([data], { type: mime });
     try {
       if (typeof window.showSaveFilePicker === "function") {
         const handle = await window.showSaveFilePicker({
           suggestedName,
-          types: [{ description: "Markdown file", accept: { "text/markdown": [".md"] } }],
+          types: [{ description: `${label} file`, accept: { [mime]: extensions.map((extension) => `.${extension}`) } }],
         });
         const writable = await handle.createWritable();
-        await writable.write(markdown);
+        await writable.write(blob);
         await writable.close();
-        new Notice("Decision map exported.");
-        return;
+        return true;
       }
     } catch (error) {
-      if (error?.name === "AbortError") return;
+      if (error?.name === "AbortError") return false;
     }
 
     try {
       const electron = require("electron");
       const dialog = electron.remote?.dialog;
       const currentWindow = electron.remote?.getCurrentWindow?.();
-      if (!dialog) throw new Error("System save dialog is unavailable");
-      const result = await dialog.showSaveDialog(currentWindow, {
-        title: "Export decision map as Markdown",
-        defaultPath: suggestedName,
-        filters: [{ name: "Markdown", extensions: ["md"] }],
-      });
-      if (result.canceled || !result.filePath) return;
-      await require("fs").promises.writeFile(result.filePath, markdown, "utf8");
-      new Notice("Decision map exported.");
+      if (dialog) {
+        const result = await dialog.showSaveDialog(currentWindow, {
+          title: `Export decision as ${label}`,
+          defaultPath: suggestedName,
+          filters: [{ name: label, extensions }],
+        });
+        if (result.canceled || !result.filePath) return false;
+        const bytes = Buffer.from(await blob.arrayBuffer());
+        await require("fs").promises.writeFile(result.filePath, bytes);
+        return true;
+      }
     } catch (error) {
-      console.error("Decision Helper Markdown export failed", error);
-      new Notice("The system Save As dialog could not be opened on this device.");
+      console.error(`Decision Helper ${label} export failed`, error);
+    }
+
+    try {
+      const file = new File([blob], suggestedName, { type: mime });
+      if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+        await navigator.share({ files: [file], title: suggestedName });
+        return true;
+      }
+    } catch (error) {
+      if (error?.name === "AbortError") return false;
+    }
+
+    try {
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = suggestedName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return true;
+    } catch (error) {
+      console.error(`Decision Helper ${label} download failed`, error);
+      new Notice("This device could not open a save or share dialog.");
+      return false;
+    }
+  }
+
+  buildJsonExport() {
+    return JSON.stringify({
+      ksdhBackupFormat: 1,
+      dataFormat: FORMAT_VERSION,
+      pluginId: "kempfs-simple-decision-helper",
+      exportedAt: new Date().toISOString(),
+      map: { ...this.map, formatVersion: FORMAT_VERSION },
+    }, null, 2);
+  }
+
+  validateImportedMap(candidate) {
+    const parsed = JSON.parse(JSON.stringify(candidate));
+    if (!parsed?.rootId || !Array.isArray(parsed.nodes) || !parsed.nodes.length) throw new Error("Decision structure is missing");
+    const ids = new Set(parsed.nodes.map((node) => node?.id));
+    if (ids.has(undefined) || ids.size !== parsed.nodes.length) throw new Error("Decision structure is invalid");
+    const decisions = parsed.nodes.filter((node) => node.type === "decision");
+    const root = parsed.nodes.find((node) => node.id === parsed.rootId);
+    if (!root || root.type !== "decision" || decisions.length !== 1) throw new Error("Decision structure is invalid: a backup must contain exactly one Decision node");
+    const byId = new Map(parsed.nodes.map((node) => [node.id, node]));
+    for (const node of parsed.nodes) {
+      if (!NODE_TYPES[node.type] || !Array.isArray(node.childIds) || new Set(node.childIds).size !== node.childIds.length || node.childIds.some((id) => !ids.has(id))) {
+        throw new Error("A node or connection is invalid");
+      }
+      if ((node.type === "benefit" || node.type === "risk") && node.childIds.length) throw new Error("A scoring factor cannot contain child nodes");
+      if (node.id === parsed.rootId) {
+        node.parentId = null;
+      } else {
+        const parent = byId.get(node.parentId);
+        if (!parent || !parent.childIds.includes(node.id) || (parent.type !== "decision" && parent.type !== "option") || (parent.type === "decision" && node.type !== "option") || node.type === "decision") {
+          throw new Error("A parent connection is invalid");
+        }
+      }
+      for (const childId of node.childIds) {
+        if (byId.get(childId)?.parentId !== node.id) throw new Error("A parent connection is invalid");
+      }
+    }
+    const visited = new Set();
+    const visiting = new Set();
+    const walk = (node) => {
+      if (visiting.has(node.id)) throw new Error("The imported tree contains a circular branch");
+      if (visited.has(node.id)) return;
+      visiting.add(node.id);
+      node.childIds.forEach((id) => walk(byId.get(id)));
+      visiting.delete(node.id);
+      visited.add(node.id);
+    };
+    walk(root);
+    if (visited.size !== parsed.nodes.length) throw new Error("The imported tree contains disconnected nodes");
+    return { ...emptyMap(), ...parsed, formatVersion: FORMAT_VERSION };
+  }
+
+  parseJsonImport(json) {
+    const backup = JSON.parse(json);
+    if (backup?.ksdhBackupFormat !== 1 || (backup.pluginId && backup.pluginId !== "kempfs-simple-decision-helper") || !backup.map) {
+      throw new Error("This is not a Decision Helper JSON backup");
+    }
+    return this.validateImportedMap(backup.map);
+  }
+
+  async exportJson() {
+    if (await this.saveExportFile(this.buildJsonExport(), `${this.exportBaseName()}.json`, "application/json", "JSON backup", ["json"])) {
+      new Notice("JSON backup exported.");
+    }
+  }
+
+  async applyJsonImport(json) {
+    let imported;
+    try {
+      imported = this.parseJsonImport(json);
+    } catch (error) {
+      new Notice(`Import failed: ${error.message}`);
+      return;
+    }
+    if (!window.confirm("Replace this decision with the JSON backup? You can undo this change.")) return;
+    this.rememberViewport();
+    this.recordHistory();
+    this.map = { ...imported, selectedId: imported.rootId, scrollLeft: null, scrollTop: null };
+    this.unreadableData = null;
+    this.loadError = null;
+    await this.saveMap();
+    this.render();
+    new Notice("Decision restored from JSON backup.");
+  }
+
+  async importJson() {
+    try {
+      if (typeof window.showOpenFilePicker === "function") {
+        const [handle] = await window.showOpenFilePicker({ types: [{ description: "Decision Helper JSON backup", accept: { "application/json": [".json"] } }], multiple: false });
+        const file = await handle.getFile();
+        await this.applyJsonImport(await file.text());
+        return;
+      }
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+    }
+    try {
+      const electron = require("electron");
+      const dialog = electron.remote?.dialog;
+      const currentWindow = electron.remote?.getCurrentWindow?.();
+      if (dialog) {
+        const result = await dialog.showOpenDialog(currentWindow, { title: "Import Decision Helper JSON backup", properties: ["openFile"], filters: [{ name: "JSON", extensions: ["json"] }] });
+        if (result.canceled || !result.filePaths?.[0]) return;
+        await this.applyJsonImport(await require("fs").promises.readFile(result.filePaths[0], "utf8"));
+        return;
+      }
+    } catch (error) {
+      console.error("Decision Helper JSON import failed", error);
+    }
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json,application/json";
+    input.addEventListener("change", async () => {
+      const file = input.files?.[0];
+      if (file) await this.applyJsonImport(await file.text());
+    }, { once: true });
+    input.click();
+  }
+
+  escapeXml(value) {
+    return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+  }
+
+  svgTextLines(value, maximum = 30, maximumLines = 3) {
+    const words = String(value ?? "").trim().split(/\s+/).filter(Boolean);
+    const lines = [];
+    let line = "";
+    for (const word of words) {
+      const pieces = word.length > maximum ? word.match(new RegExp(`.{1,${maximum}}`, "g")) : [word];
+      for (const piece of pieces) {
+        const proposed = line ? `${line} ${piece}` : piece;
+        if (proposed.length <= maximum) line = proposed;
+        else {
+          if (line) lines.push(line);
+          line = piece;
+        }
+      }
+    }
+    if (line) lines.push(line);
+    if (lines.length > maximumLines) {
+      lines.length = maximumLines;
+      lines[maximumLines - 1] = `${lines[maximumLines - 1].slice(0, Math.max(1, maximum - 1))}…`;
+    }
+    return lines.length ? lines : [""];
+  }
+
+  exportNodeScore(node) {
+    if (node.type === "benefit" || node.type === "risk") {
+      const score = this.scoreForNode(node);
+      return score === null ? "Unrated" : `${node.isConstraint ? "DEAL-BREAKER · " : ""}${node.type === "benefit" ? "+" : "−"}${score} · L${node.likelihood} × I${node.impact}`;
+    }
+    const totals = node.type === "decision" ? this.totalsForDecision() : this.totalsForOption(node);
+    if (!totals) return "Not evaluated";
+    if (totals.disqualified) return "Blocked by deal-breaker";
+    if (node.type === "decision") return totals.tiedOptions?.length > 1 ? "Tie" : `Leader: ${totals.chosenOption?.text || "None"} · ${totals.score >= 0 ? "+" : ""}${totals.score}`;
+    return `Score ${totals.score >= 0 ? "+" : ""}${totals.score}`;
+  }
+
+  buildSvgExport() {
+    const layout = this.calculateLayout();
+    const entries = [...layout.positions.entries()];
+    if (!entries.length) throw new Error("The decision map is empty");
+    const exportCardHeight = 122;
+    const margin = 70;
+    const minX = Math.min(...entries.map(([, position]) => position.x));
+    const minY = Math.min(...entries.map(([, position]) => position.y));
+    const maxX = Math.max(...entries.map(([, position]) => position.x + CARD_WIDTH));
+    const maxY = Math.max(...entries.map(([, position]) => position.y + exportCardHeight));
+    const width = Math.ceil(maxX - minX + margin * 2);
+    const height = Math.ceil(maxY - minY + margin * 2);
+    const shifted = new Map(entries.map(([id, position]) => [id, { x: position.x - minX + margin, y: position.y - minY + margin }]));
+    const wantsLight = this.map.background === "light" || (this.map.background === "system" && document.body?.classList?.contains("theme-light"));
+    const palette = wantsLight
+      ? { background: "#f6f7f9", card: "#ffffff", text: "#202124", muted: "#62666d", line: "#73777f", label: "#ffffff", border: "#c9ccd2" }
+      : { background: "#17181b", card: "#242529", text: "#f0f1f3", muted: "#a9adb5", line: "#b8bbc1", label: "#202125", border: "#43464d" };
+    const accents = { decision: "#7857ff", option: "#3b91c8", benefit: "#58a85d", risk: "#c85c5c" };
+    const direction = this.map.layout || "down";
+    const horizontal = direction === "left" || direction === "right";
+    const parts = [
+      `<?xml version="1.0" encoding="UTF-8"?>`,
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+      `<rect width="100%" height="100%" fill="${palette.background}"/>`,
+      `<g fill="none" stroke="${palette.line}" stroke-width="2">`,
+    ];
+    for (const node of this.map.nodes) {
+      if (!node.parentId) continue;
+      const parent = shifted.get(node.parentId);
+      const child = shifted.get(node.id);
+      if (!parent || !child) continue;
+      let x1; let y1; let x2; let y2;
+      if (direction === "up") { x1 = parent.x + CARD_WIDTH / 2; y1 = parent.y; x2 = child.x + CARD_WIDTH / 2; y2 = child.y + CARD_HEIGHT; }
+      else if (direction === "right") { x1 = parent.x + CARD_WIDTH; y1 = parent.y + CARD_HEIGHT / 2; x2 = child.x; y2 = child.y + CARD_HEIGHT / 2; }
+      else if (direction === "left") { x1 = parent.x; y1 = parent.y + CARD_HEIGHT / 2; x2 = child.x + CARD_WIDTH; y2 = child.y + CARD_HEIGHT / 2; }
+      else { x1 = parent.x + CARD_WIDTH / 2; y1 = parent.y + CARD_HEIGHT; x2 = child.x + CARD_WIDTH / 2; y2 = child.y; }
+      const middleX = x1 + (x2 - x1) / 2;
+      const middleY = y1 + (y2 - y1) / 2;
+      const path = horizontal
+        ? `M ${x1} ${y1} C ${middleX} ${y1}, ${middleX} ${y2}, ${x2} ${y2}`
+        : `M ${x1} ${y1} C ${x1} ${middleY}, ${x2} ${middleY}, ${x2} ${y2}`;
+      parts.push(`<path d="${path}"/>`);
+    }
+    parts.push(`</g>`);
+    for (const node of this.map.nodes) {
+      if (!node.parentId) continue;
+      const parent = shifted.get(node.parentId);
+      const child = shifted.get(node.id);
+      if (!parent || !child) continue;
+      const label = node.relationship || DEFAULT_RELATIONSHIPS[node.type] || "Related";
+      const x = (parent.x + child.x) / 2 + CARD_WIDTH / 2;
+      const y = (parent.y + child.y) / 2 + CARD_HEIGHT / 2;
+      const labelWidth = Math.min(190, Math.max(58, label.length * 6.5 + 18));
+      parts.push(`<rect x="${x - labelWidth / 2}" y="${y - 12}" width="${labelWidth}" height="24" rx="12" fill="${palette.label}" stroke="${palette.border}"/>`);
+      parts.push(`<text x="${x}" y="${y + 4}" text-anchor="middle" font-family="sans-serif" font-size="11" fill="${palette.text}">${this.escapeXml(label.length > 26 ? `${label.slice(0, 25)}…` : label)}</text>`);
+    }
+    for (const node of this.map.nodes) {
+      const position = shifted.get(node.id);
+      if (!position) continue;
+      const accent = accents[node.type] || accents.option;
+      parts.push(`<g><title>${this.escapeXml(node.text)}</title>`);
+      parts.push(`<rect x="${position.x}" y="${position.y}" width="${CARD_WIDTH}" height="${exportCardHeight}" rx="11" fill="${palette.card}" stroke="${node.isConstraint ? accents.risk : palette.border}" stroke-width="${node.type === "decision" ? 3 : 1.5}"/>`);
+      parts.push(`<rect x="${position.x}" y="${position.y}" width="6" height="${exportCardHeight}" rx="3" fill="${accent}"/>`);
+      parts.push(`<text x="${position.x + 18}" y="${position.y + 21}" font-family="sans-serif" font-size="10" font-weight="700" letter-spacing="1" fill="${accent}">${this.escapeXml(node.type === "risk" ? "DRAWBACK" : (NODE_TYPES[node.type]?.label || node.type).toUpperCase())}</text>`);
+      const lines = this.svgTextLines(node.text);
+      lines.forEach((line, index) => parts.push(`<text x="${position.x + CARD_WIDTH / 2}" y="${position.y + 48 + index * 17}" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="600" fill="${palette.text}">${this.escapeXml(line)}</text>`));
+      parts.push(`<text x="${position.x + CARD_WIDTH / 2}" y="${position.y + 108}" text-anchor="middle" font-family="sans-serif" font-size="10" font-weight="600" fill="${node.type === "risk" ? accents.risk : (node.type === "benefit" ? accents.benefit : palette.muted)}">${this.escapeXml(this.exportNodeScore(node))}</text>`);
+      parts.push(`</g>`);
+    }
+    parts.push(`</svg>`);
+    return { svg: parts.join(""), width, height };
+  }
+
+  async exportSvg() {
+    try {
+      const { svg } = this.buildSvgExport();
+      if (await this.saveExportFile(svg, `${this.exportBaseName()}.svg`, "image/svg+xml", "SVG", ["svg"])) new Notice("SVG exported.");
+    } catch (error) {
+      console.error("Decision Helper SVG export failed", error);
+      new Notice("The SVG could not be created.");
+    }
+  }
+
+  async svgToJpegBlob(svg, width, height) {
+    const source = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(source);
+    try {
+      const image = new Image();
+      await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; image.src = url; });
+      const scale = Math.max(1, Math.min(2, 8000 / Math.max(width, height)));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      return await new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("JPG encoding failed")), "image/jpeg", 0.92));
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  async exportJpg() {
+    try {
+      const { svg, width, height } = this.buildSvgExport();
+      const jpg = await this.svgToJpegBlob(svg, width, height);
+      if (await this.saveExportFile(jpg, `${this.exportBaseName()}.jpg`, "image/jpeg", "JPG", ["jpg", "jpeg"])) new Notice("JPG exported.");
+    } catch (error) {
+      console.error("Decision Helper JPG export failed", error);
+      new Notice("The JPG could not be created on this device.");
+    }
+  }
+
+  async jpegToPdf(jpegBlob, pixelWidth, pixelHeight) {
+    const jpeg = new Uint8Array(await jpegBlob.arrayBuffer());
+    const landscape = pixelWidth >= pixelHeight;
+    const pageWidth = landscape ? 792 : 612;
+    const pageHeight = landscape ? 612 : 792;
+    const margin = 24;
+    const scale = Math.min((pageWidth - margin * 2) / pixelWidth, (pageHeight - margin * 2) / pixelHeight);
+    const drawWidth = pixelWidth * scale;
+    const drawHeight = pixelHeight * scale;
+    const drawX = (pageWidth - drawWidth) / 2;
+    const drawY = (pageHeight - drawHeight) / 2;
+    const encoder = new TextEncoder();
+    const content = `q\n${drawWidth.toFixed(3)} 0 0 ${drawHeight.toFixed(3)} ${drawX.toFixed(3)} ${drawY.toFixed(3)} cm\n/Im0 Do\nQ\n`;
+    const objects = [
+      encoder.encode("<< /Type /Catalog /Pages 2 0 R >>"),
+      encoder.encode("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+      encoder.encode(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`),
+      { prefix: encoder.encode(`<< /Type /XObject /Subtype /Image /Width ${pixelWidth} /Height ${pixelHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`), data: jpeg, suffix: encoder.encode("\nendstream") },
+      encoder.encode(`<< /Length ${encoder.encode(content).length} >>\nstream\n${content}endstream`),
+    ];
+    const parts = [encoder.encode("%PDF-1.4\n%KSDH\n")];
+    const offsets = [0];
+    let length = parts[0].length;
+    objects.forEach((object, index) => {
+      offsets.push(length);
+      const prefix = encoder.encode(`${index + 1} 0 obj\n`);
+      const suffix = encoder.encode("\nendobj\n");
+      parts.push(prefix); length += prefix.length;
+      if (object.data) {
+        parts.push(object.prefix, object.data, object.suffix);
+        length += object.prefix.length + object.data.length + object.suffix.length;
+      } else {
+        parts.push(object); length += object.length;
+      }
+      parts.push(suffix); length += suffix.length;
+    });
+    const xrefOffset = length;
+    let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (let index = 1; index <= objects.length; index += 1) xref += `${String(offsets[index]).padStart(10, "0")} 00000 n \n`;
+    xref += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+    parts.push(encoder.encode(xref));
+    return new Blob(parts, { type: "application/pdf" });
+  }
+
+  async exportPdf() {
+    try {
+      const { svg, width, height } = this.buildSvgExport();
+      const jpg = await this.svgToJpegBlob(svg, width, height);
+      const pdf = await this.jpegToPdf(jpg, Math.max(1, Math.round(width * Math.max(1, Math.min(2, 8000 / Math.max(width, height))))), Math.max(1, Math.round(height * Math.max(1, Math.min(2, 8000 / Math.max(width, height))))));
+      if (await this.saveExportFile(pdf, `${this.exportBaseName()}.pdf`, "application/pdf", "PDF", ["pdf"])) new Notice("PDF exported.");
+    } catch (error) {
+      console.error("Decision Helper PDF export failed", error);
+      new Notice("The PDF could not be created on this device.");
     }
   }
 
@@ -2231,17 +2200,28 @@ class DecisionMapView extends TextFileView {
     const depthStep = vertical
       ? CARD_HEIGHT + SCORE_FOOTER_HEIGHT + levelGap
       : CARD_WIDTH + levelGap;
-    let nextLeaf = 0;
+    let leafIndex = 0;
 
     const place = (node, depth) => {
       const children = this.visibleChildren(node);
       let cross;
       if (!children.length) {
-        cross = nextLeaf;
-        nextLeaf += crossStep;
+        cross = leafIndex * crossStep;
+        leafIndex += 1;
       } else {
-        const childCenters = children.map((child) => place(child, depth + 1));
-        cross = (childCenters[0] + childCenters[childCenters.length - 1]) / 2;
+        const hasBenefit = children.some((child) => child.type === "benefit");
+        const hasRisk = children.some((child) => child.type === "risk");
+        const boundaries = [];
+        if (hasRisk && !hasBenefit) {
+          boundaries.push(leafIndex * crossStep);
+          leafIndex += 1;
+        }
+        boundaries.push(...children.map((child) => place(child, depth + 1)));
+        if (hasBenefit && !hasRisk) {
+          boundaries.push(leafIndex * crossStep);
+          leafIndex += 1;
+        }
+        cross = (boundaries[0] + boundaries[boundaries.length - 1]) / 2;
       }
 
       const signedDepth = (direction === "up" || direction === "left" ? -1 : 1) * depth * depthStep;
@@ -2320,7 +2300,7 @@ class DecisionMapView extends TextFileView {
         },
       });
 
-      const label = this.displayRelationship(node);
+      const label = node.relationship || DEFAULT_RELATIONSHIPS[node.type] || NODE_TYPES[node.type]?.label || "Related";
       const shownLabel = label.length > 26 ? `${label.slice(0, 25)}…` : label;
       const labelX = middleX;
       const labelY = middleY - 5;
@@ -2380,11 +2360,10 @@ class DecisionMapView extends TextFileView {
           const options = this.rankedTopLevelOptions();
           const needsMoreInfo = this.decisionNeedsMoreInfo(options);
           const tied = totals?.tiedOptions || [];
-          const allNegative = !needsMoreInfo && tied.length === 1 && totals.score < 0;
-          scoreBox.createDiv({ cls: `kdh-simple-score${needsMoreInfo ? " is-incomplete" : (allNegative ? " is-negative" : "")}`, text: needsMoreInfo ? "Not evaluated" : (tied.length > 1 ? `Tie: ${tied.map((item) => item.text).join(" · ")}` : (allNegative ? `Best evaluated: ${totals.chosenOption?.text || "None"}` : `Recommended: ${totals.chosenOption?.text || "None"}`)) });
+          scoreBox.createDiv({ cls: `kdh-simple-score${needsMoreInfo ? " is-incomplete" : ""}`, text: needsMoreInfo ? "Not evaluated" : (tied.length > 1 ? `Tie: ${tied.map((item) => item.text).join(" · ")}` : `Current leader: ${totals.chosenOption?.text || "None"}`) });
           if (!needsMoreInfo) scoreBox.createDiv({ cls: `kdh-simple-score-detail${totals.score < 0 ? " is-negative" : ""}`, text: `${this.scoreDescription(totals.score)} · ${totals.score >= 0 ? "+" : ""}${totals.score}` });
         } else if (totals.disqualified) {
-          scoreBox.createDiv({ cls: "kdh-simple-score is-blocked", text: `Blocked: ${totals.disqualifyingRisk?.text || "deal-breaker drawback"}` });
+          scoreBox.createDiv({ cls: "kdh-simple-score is-blocked", text: `Blocked: ${totals.disqualifyingRisk?.text || "deal-breaker risk"}` });
         } else {
           scoreBox.createDiv({ cls: `kdh-simple-score${totals.score < 0 ? " is-negative" : ""}`, text: `${this.scoreDescription(totals.score)} · ${totals.score >= 0 ? "+" : ""}${totals.score}` });
         }
@@ -2396,21 +2375,7 @@ class DecisionMapView extends TextFileView {
         add.addEventListener("click", (event) => { event.stopPropagation(); this.addChild(node); });
       }
 
-      if (node.type === "decision" && node.childIds.length === 0) {
-        const edit = card.createEl("button", { cls: "kdh-edit-node clickable-icon", attr: { "aria-label": "Edit decision" } });
-        setIcon(edit, "pencil");
-        edit.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          this.editNode(node);
-        });
-      }
-
-      card.addEventListener("dblclick", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        this.editNode(node);
-      });
+      card.addEventListener("dblclick", () => this.editNode(node));
       this.installLongPress(card, (event) => this.showNodeMenu(event, node));
       card.addEventListener("dragstart", (event) => {
         if (!node.parentId || event.target.closest("button")) {
@@ -2452,6 +2417,52 @@ class DecisionMapView extends TextFileView {
 
   installNavigation(scroller, canvas) {
     this.currentScroller = scroller;
+    const trackTouchStart = (event) => {
+      if (event.pointerType !== "touch") return;
+      if (this.touchPointers.size === 0) {
+        this.touchGestureMoved = false;
+        this.touchGestureMulti = false;
+      }
+      this.touchPointers.set(event.pointerId, {
+        startX: event.clientX,
+        startY: event.clientY,
+        x: event.clientX,
+        y: event.clientY,
+      });
+      if (this.touchPointers.size > 1) {
+        this.touchGestureMulti = true;
+        this.longPressCancellers.forEach((cancel) => cancel());
+      }
+    };
+    const trackTouchMove = (event) => {
+      if (event.pointerType !== "touch") return;
+      const point = this.touchPointers.get(event.pointerId);
+      if (!point) return;
+      point.x = event.clientX;
+      point.y = event.clientY;
+      if (Math.hypot(point.x - point.startX, point.y - point.startY) > 8) {
+        this.touchGestureMoved = true;
+        this.longPressCancellers.forEach((cancel) => cancel());
+      }
+    };
+    const trackTouchEnd = (event) => {
+      if (event.pointerType !== "touch") return;
+      this.touchPointers.delete(event.pointerId);
+      if (this.touchGestureMoved || this.touchGestureMulti) this.touchSuppressUntil = Date.now() + 500;
+      if (this.touchPointers.size === 0) {
+        const gestureEndedAt = this.touchSuppressUntil;
+        setTimeout(() => {
+          if (this.touchPointers.size === 0 && this.touchSuppressUntil === gestureEndedAt) {
+            this.touchGestureMoved = false;
+            this.touchGestureMulti = false;
+          }
+        }, 520);
+      }
+    };
+    scroller.addEventListener("pointerdown", trackTouchStart, true);
+    scroller.addEventListener("pointermove", trackTouchMove, true);
+    scroller.addEventListener("pointerup", trackTouchEnd, true);
+    scroller.addEventListener("pointercancel", trackTouchEnd, true);
     scroller.addEventListener("scroll", () => {
       this.map.scrollLeft = scroller.scrollLeft;
       this.map.scrollTop = scroller.scrollTop;
@@ -2620,9 +2631,9 @@ module.exports = class KempfsSimpleDecisionHelper extends Plugin {
   availablePath(title) {
     const safeName = title
       .replace(/[\\/:*?"<>|#\[\]^]/g, "")
+      .replace(/[. ]+$/g, "")
       .trim()
-      .slice(0, 80)
-      .replace(/[. ]+$/g, "") || "New decision";
+      .slice(0, 80) || "New decision";
     let folder = this.settings.defaultFolder || "";
     if (folder && !(this.app.vault.getAbstractFileByPath(folder) instanceof TFolder)) {
       folder = "";

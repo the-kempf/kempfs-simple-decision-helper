@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.13 — Mobile and export improvements
+
+- Improved touchscreen panning, pinch-to-zoom, and long-press menu handling.
+- Fixed the mobile node editor so all rating controls remain accessible.
+- Restored JSON backup import and export.
+- Restored Markdown, SVG, JPG, and PDF exports.
+- Kept Markdown as a readable report and JSON as the only restorable backup format.
+
 ## 0.3.10 — Initial public release
 
 - Create a separate visual decision map for each `.ksdh` vault file.
@@ -14,4 +22,3 @@
 - Export Markdown reports, JSON backups, SVG, JPG, and PDF.
 - Import verified JSON backups with damaged-file protection.
 - Store global defaults and note-specific display settings.
-

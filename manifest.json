@@ -1,7 +1,7 @@
 {
   "id": "kempfs-simple-decision-helper",
   "name": "Kempf Simple Decision Helper",
-  "version": "0.3.11",
+  "version": "0.3.13",
   "minAppVersion": "1.5.0",
   "description": "A file-based visual decision map for comparing options, benefits, drawbacks, and tradeoffs.",
   "author": "Simple Decision Helper Project",

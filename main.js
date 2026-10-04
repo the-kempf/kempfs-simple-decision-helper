@@ -1,6 +1,5 @@
 const {
   TextFileView,
-  FuzzySuggestModal,
   Menu,
   Modal,
   Notice,
@@ -34,7 +33,9 @@ const VERTICAL_LEVEL_GAP = 135;
 const HORIZONTAL_SIBLING_GAP = 90;
 const HORIZONTAL_LEVEL_GAP = 165;
 const TREE_MARGIN = 70;
-const CANVAS_SPACE = 1200;
+const LEGACY_CANVAS_SPACES = new Set([1200, 6000]);
+const CANVAS_SPACE = 12000;
+const MIN_ZOOM = 0.05;
 
 const NODE_TYPES = {
   decision: { label: "Decision", color: "decision" },
@@ -56,6 +57,91 @@ const TYPE_GUIDANCE = {
   risk: "Something that could go wrong with a specific option.",
 };
 
+const DECISION_TEMPLATES = {
+  blank: {
+    name: "Blank",
+    description: "Start with only the Decision node.",
+    options: [],
+  },
+  simple: {
+    name: "Simple Choice",
+    description: "Compare two choices using one starting Benefit and Risk for each.",
+    options: [
+      { text: "Option A", factors: [{ type: "benefit", text: "Primary advantage" }, { type: "risk", text: "Primary concern" }] },
+      { text: "Option B", factors: [{ type: "benefit", text: "Primary advantage" }, { type: "risk", text: "Primary concern" }] },
+    ],
+  },
+  buy_or_keep: {
+    name: "Buy or Keep",
+    description: "Compare buying something new with continuing to use what you already have.",
+    options: [
+      { text: "Buy new", factors: [{ type: "benefit", text: "Improved features or performance" }, { type: "benefit", text: "Warranty and expected reliability" }, { type: "risk", text: "Upfront purchase cost" }] },
+      { text: "Keep current", factors: [{ type: "benefit", text: "Avoid immediate expense" }, { type: "benefit", text: "Already familiar" }, { type: "risk", text: "Repair or failure risk" }] },
+    ],
+  },
+  education: {
+    name: "Education/Training",
+    description: "Compare formal study, a shorter credential, and self-directed learning.",
+    options: [
+      { text: "Formal program", factors: [{ type: "benefit", text: "Recognized qualification" }, { type: "risk", text: "Higher cost and time commitment" }] },
+      { text: "Course or certification", factors: [{ type: "benefit", text: "Focused, practical training" }, { type: "risk", text: "May cover a narrower skill set" }] },
+      { text: "Self-directed learning", factors: [{ type: "benefit", text: "Flexible and inexpensive" }, { type: "risk", text: "Requires discipline and may lack recognition" }] },
+    ],
+  },
+  home_improvement: {
+    name: "Home Improvement",
+    description: "Compare repairing, replacing or renovating, and postponing the work.",
+    options: [
+      { text: "Repair", factors: [{ type: "benefit", text: "Lower immediate cost" }, { type: "risk", text: "May not solve the underlying problem" }] },
+      { text: "Replace or renovate", factors: [{ type: "benefit", text: "Longer useful life and improved result" }, { type: "risk", text: "Higher cost and disruption" }] },
+      { text: "Postpone", factors: [{ type: "benefit", text: "Preserve cash now" }, { type: "risk", text: "Damage or costs may grow" }] },
+    ],
+  },
+};
+
+function normalizeBackground(value) {
+  if (value === "light") return "paper";
+  return value === "dark" || value === "paper" ? value : "system";
+}
+
+function normalizeLayout(value) {
+  if (value === "linear") return "linear-down-right";
+  return [
+    "down", "up", "right", "left",
+    "staggered-up", "staggered-down", "staggered-left", "staggered-right",
+    "linear-up-left", "linear-up-right", "linear-down-left", "linear-down-right",
+    "linear-left-up", "linear-left-down", "linear-right-up", "linear-right-down",
+  ].includes(value) ? value : "down";
+}
+
+function layoutLabel(value) {
+  return {
+    right: "Right-facing",
+    left: "Left-facing",
+    up: "Top-facing",
+    down: "Bottom-facing",
+    "staggered-up": "Staggered — Up",
+    "staggered-down": "Staggered — Down",
+    "staggered-left": "Staggered — Left",
+    "staggered-right": "Staggered — Right",
+    "linear-up-left": "Up and Left",
+    "linear-up-right": "Up and Right",
+    "linear-down-left": "Down and Left",
+    "linear-down-right": "Down and Right",
+    "linear-left-up": "Left and Up",
+    "linear-left-down": "Left and Down",
+    "linear-right-up": "Right and Up",
+    "linear-right-down": "Right and Down",
+  }[normalizeLayout(value)] || "Bottom-facing";
+}
+
+function layoutFamily(value) {
+  const normalized = normalizeLayout(value);
+  if (normalized.startsWith("linear-")) return "linear";
+  if (normalized.startsWith("staggered-")) return "staggered";
+  return "standard";
+}
+
 function emptyMap() {
   return {
     formatVersion: FORMAT_VERSION,
@@ -66,9 +152,13 @@ function emptyMap() {
     background: "dark",
     scrollLeft: null,
     scrollTop: null,
-    selectedDetailsOpen: false,
+    canvasSpace: CANVAS_SPACE,
+    nodeInfoCollapsed: false,
+    summaryCollapsed: false,
     showWarnings: true,
     showScoreLabels: true,
+    dimUnselectedBranches: true,
+    dimStrength: 50,
     siblingSpacing: "regular",
     levelSpacing: "regular",
   };
@@ -80,9 +170,394 @@ function newMapWithDefaults(settings) {
     ...emptyMap(),
     zoom: zoomSetting === "0.75" ? 0.75 : 1,
     fitOnOpen: zoomSetting === "fit",
-    layout: settings.defaultLayout || "down",
-    background: settings.defaultBackground || "system",
+    layout: normalizeLayout(settings.defaultLayout),
+    background: normalizeBackground(settings.defaultBackground),
   };
+}
+
+function createDecisionMapFromTemplate(settings, title, templateId = "blank") {
+  const template = DECISION_TEMPLATES[templateId] || DECISION_TEMPLATES.blank;
+  let sequence = 0;
+  const makeId = () => `node-${Date.now()}-${++sequence}-${Math.random().toString(36).slice(2, 7)}`;
+  const root = {
+    id: makeId(), text: title, type: "decision", parentId: null, relationship: "", likelihood: 0, impact: 0,
+    isConstraint: false, subOptionMode: settings.defaultSubOptionMode, notes: "", collapsed: false, locked: false, childIds: [],
+  };
+  const nodes = [root];
+  for (const optionTemplate of template.options) {
+    const option = {
+      id: makeId(), text: optionTemplate.text, type: "option", parentId: root.id, relationship: DEFAULT_RELATIONSHIPS.option,
+      likelihood: 0, impact: 0, isConstraint: false, subOptionMode: settings.defaultSubOptionMode, notes: "", collapsed: false, locked: false, childIds: [],
+    };
+    root.childIds.push(option.id);
+    nodes.push(option);
+    for (const factorTemplate of optionTemplate.factors || []) {
+      const factor = {
+        id: makeId(), text: factorTemplate.text, type: factorTemplate.type, parentId: option.id,
+        relationship: DEFAULT_RELATIONSHIPS[factorTemplate.type], likelihood: 1, impact: 1, isConstraint: false,
+        subOptionMode: "alternative", notes: "", collapsed: false, locked: false, childIds: [],
+      };
+      option.childIds.push(factor.id);
+      nodes.push(factor);
+    }
+  }
+  return { ...newMapWithDefaults(settings), rootId: root.id, selectedId: root.id, nodes };
+}
+
+class DecisionTemplatePreviewModal extends Modal {
+  constructor(app, map, templateName) {
+    super(app);
+    this.map = map;
+    this.templateName = templateName;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    this.modalEl.addClass("kdh-template-preview-window");
+    contentEl.createEl("h2", { text: `${this.templateName} preview` });
+    const canvas = contentEl.createDiv({ cls: "kdh-template-preview", attr: { role: "img", "aria-label": `${this.templateName} decision template preview` } });
+    const root = this.map.nodes.find((node) => node.id === this.map.rootId);
+    const rootCard = canvas.createDiv({ cls: "kdh-template-preview-root" });
+    rootCard.createDiv({ cls: "kdh-template-preview-type", text: "Decision" });
+    rootCard.createDiv({ cls: "kdh-template-preview-text", text: root?.text || "Decision" });
+    const options = (root?.childIds || []).map((id) => this.map.nodes.find((node) => node.id === id)).filter(Boolean);
+    if (!options.length) {
+      canvas.createDiv({ cls: "kdh-template-preview-empty", text: "Add options to begin comparing choices." });
+    } else {
+      const branches = canvas.createDiv({ cls: "kdh-template-preview-branches" });
+      for (const option of options) {
+        const branch = branches.createDiv({ cls: "kdh-template-preview-branch" });
+        const optionCard = branch.createDiv({ cls: "kdh-template-preview-option" });
+        optionCard.createDiv({ cls: "kdh-template-preview-type", text: "Option" });
+        optionCard.createDiv({ cls: "kdh-template-preview-text", text: option.text });
+        const factors = branch.createDiv({ cls: "kdh-template-preview-factors" });
+        for (const childId of option.childIds) {
+          const factor = this.map.nodes.find((node) => node.id === childId);
+          if (!factor) continue;
+          const factorCard = factors.createDiv({ cls: `kdh-template-preview-factor is-${factor.type}` });
+          factorCard.createDiv({ cls: "kdh-template-preview-type", text: factor.type === "benefit" ? "Benefit" : "Risk" });
+          factorCard.createDiv({ cls: "kdh-template-preview-text", text: factor.text });
+        }
+      }
+    }
+    new Setting(contentEl).addButton((button) => button.setButtonText("Close").setCta().onClick(() => this.close()));
+  }
+
+  onClose() { this.contentEl.empty(); }
+}
+
+class DecisionLayoutPickerModal extends Modal {
+  constructor(app, currentLayout, background, onApply) {
+    super(app);
+    this.selectedLayout = normalizeLayout(currentLayout);
+    this.background = normalizeBackground(background);
+    this.onApplyLayout = onApply;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    this.modalEl.addClass("kdh-layout-picker-window");
+    contentEl.addClass("kdh-layout-picker-modal");
+    contentEl.createEl("h2", { text: "Choose layout" });
+    const body = contentEl.createDiv({ cls: "kdh-layout-picker-body" });
+    const controls = body.createDiv({ cls: "kdh-layout-picker-controls" });
+    const previewPane = body.createDiv({ cls: "kdh-layout-preview-pane" });
+    previewPane.createEl("h3", { text: "Preview" });
+    this.previewEl = previewPane.createDiv({ cls: "kdh-layout-preview", attr: { role: "img" } });
+    this.selectionEl = controls.createDiv({ cls: "kdh-layout-picker-selection" });
+    this.renderControls();
+    this.renderPreview();
+    new Setting(contentEl)
+      .addButton((button) => button.setButtonText("Cancel").onClick(() => this.close()))
+      .addButton((button) => button.setButtonText("Apply").setCta().onClick(() => {
+        this.close();
+        this.onApplyLayout(this.selectedLayout);
+      }));
+  }
+
+  chooseLayout(layout) {
+    this.selectedLayout = normalizeLayout(layout);
+    this.renderControls();
+    this.renderPreview();
+  }
+
+  addChoiceGroup(parent, title, choices) {
+    parent.createEl("h3", { text: title });
+    const group = parent.createDiv({ cls: "kdh-layout-choice-grid" });
+    for (const [value, label] of choices) {
+      const button = group.createEl("button", { text: label, cls: value === this.selectedLayout ? "is-selected" : "" });
+      button.setAttr("type", "button");
+      button.setAttr("aria-pressed", value === this.selectedLayout ? "true" : "false");
+      button.addEventListener("click", () => this.chooseLayout(value));
+    }
+  }
+
+  renderControls() {
+    const parent = this.selectionEl;
+    parent.empty();
+    const family = layoutFamily(this.selectedLayout);
+    parent.createEl("h3", { text: "Layout style" });
+    const families = parent.createDiv({ cls: "kdh-layout-family-grid" });
+    [["standard", "Standard"], ["staggered", "Staggered"], ["linear", "Linear"]].forEach(([value, label]) => {
+      const button = families.createEl("button", { text: label, cls: value === family ? "is-selected" : "" });
+      button.setAttr("type", "button");
+      button.setAttr("aria-pressed", value === family ? "true" : "false");
+      button.addEventListener("click", () => {
+        if (value !== family) {
+          const defaults = { standard: "right", staggered: "staggered-right", linear: "linear-down-right" };
+          this.chooseLayout(defaults[value]);
+        }
+      });
+    });
+    if (family === "standard") {
+      this.addChoiceGroup(parent, "Direction", [
+        ["up", "↑ Top-facing"], ["down", "↓ Bottom-facing"],
+        ["left", "← Left-facing"], ["right", "→ Right-facing"],
+      ]);
+    } else if (family === "staggered") {
+      this.addChoiceGroup(parent, "Trunk direction", [
+        ["staggered-up", "↑ Up"], ["staggered-down", "↓ Down"],
+        ["staggered-left", "← Left"], ["staggered-right", "→ Right"],
+      ]);
+    } else {
+      const [, sequence, branch] = this.selectedLayout.split("-");
+      this.addChoiceGroup(parent, "Sequence direction", [
+        [`linear-up-${["left", "right"].includes(branch) ? branch : "right"}`, "↑ Up"],
+        [`linear-down-${["left", "right"].includes(branch) ? branch : "right"}`, "↓ Down"],
+        [`linear-left-${["up", "down"].includes(branch) ? branch : "down"}`, "← Left"],
+        [`linear-right-${["up", "down"].includes(branch) ? branch : "down"}`, "→ Right"],
+      ]);
+      const branchChoices = ["up", "down"].includes(sequence)
+        ? [[`linear-${sequence}-left`, "← Left"], [`linear-${sequence}-right`, "→ Right"]]
+        : [[`linear-${sequence}-up`, "↑ Up"], [`linear-${sequence}-down`, "↓ Down"]];
+      this.addChoiceGroup(parent, "Branch direction", branchChoices);
+    }
+    parent.createEl("p", { text: `Selected: ${layoutLabel(this.selectedLayout)}`, cls: "kdh-layout-current" });
+  }
+
+  svgElement(name, attributes = {}) {
+    const element = document.createElementNS("http://www.w3.org/2000/svg", name);
+    for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
+    return element;
+  }
+
+  previewNodes() {
+    const layout = this.selectedLayout;
+    let nodes;
+    if (layout.startsWith("linear-")) {
+      const [, sequence] = layout.split("-");
+      nodes = ["up", "down"].includes(sequence)
+        ? [
+          { id: "decision", type: "decision", text: "Choose a plan", x: 70, y: 28, w: 170, h: 58 },
+          { id: "option-a", parent: "decision", type: "option", text: "Option A", x: 225, y: 125, w: 130, h: 50 },
+          { id: "benefit-a", parent: "option-a", type: "benefit", text: "Strong benefit", x: 365, y: 205, w: 135, h: 48 },
+          { id: "risk-a", parent: "option-a", type: "risk", text: "Possible risk", x: 365, y: 278, w: 135, h: 48 },
+          { id: "option-b", parent: "decision", type: "option", text: "Option B", x: 225, y: 365, w: 130, h: 50 },
+          { id: "benefit-b", parent: "option-b", type: "benefit", text: "Useful benefit", x: 365, y: 438, w: 135, h: 48 },
+        ]
+        : [
+          { id: "decision", type: "decision", text: "Choose a plan", x: 20, y: 45, w: 150, h: 58 },
+          { id: "option-a", parent: "decision", type: "option", text: "Option A", x: 190, y: 185, w: 115, h: 50 },
+          { id: "benefit-a", parent: "option-a", type: "benefit", text: "Benefit", x: 325, y: 325, w: 110, h: 48 },
+          { id: "risk-a", parent: "option-a", type: "risk", text: "Risk", x: 455, y: 325, w: 100, h: 48 },
+          { id: "option-b", parent: "decision", type: "option", text: "Option B", x: 570, y: 185, w: 115, h: 50 },
+        ];
+      const branch = layout.split("-")[2];
+      if (sequence === "left") for (const node of nodes) node.x = 700 - node.x - node.w;
+      if (sequence === "up" || branch === "up") for (const node of nodes) node.y = 520 - node.y - node.h;
+      if (["up", "down"].includes(sequence) && branch === "left") for (const node of nodes) node.x = 700 - node.x - node.w;
+      return nodes;
+    }
+    if (layout.startsWith("staggered-")) {
+      const direction = layout.slice("staggered-".length);
+      nodes = ["left", "right"].includes(direction)
+        ? [
+          { id: "decision", type: "decision", text: "Choose a plan", x: 25, y: 231, w: 170, h: 58 },
+          { id: "option-a", parent: "decision", type: "option", text: "Option A", x: 245, y: 165, w: 130, h: 50, branchDirection: "up" },
+          { id: "benefit-a", parent: "option-a", type: "benefit", text: "Benefit", x: 245, y: 55, w: 130, h: 48, branchDirection: "up" },
+          { id: "option-b", parent: "decision", type: "option", text: "Option B", x: 470, y: 310, w: 130, h: 50, branchDirection: "down" },
+          { id: "risk-b", parent: "option-b", type: "risk", text: "Risk", x: 470, y: 420, w: 130, h: 48, branchDirection: "down" },
+        ]
+        : [
+          { id: "decision", type: "decision", text: "Choose a plan", x: 265, y: 25, w: 170, h: 58 },
+          { id: "option-a", parent: "decision", type: "option", text: "Option A", x: 190, y: 190, w: 130, h: 50, branchDirection: "left" },
+          { id: "benefit-a", parent: "option-a", type: "benefit", text: "Benefit", x: 35, y: 190, w: 130, h: 48, branchDirection: "left" },
+          { id: "option-b", parent: "decision", type: "option", text: "Option B", x: 390, y: 365, w: 130, h: 50, branchDirection: "right" },
+          { id: "risk-b", parent: "option-b", type: "risk", text: "Risk", x: 545, y: 365, w: 130, h: 48, branchDirection: "right" },
+        ];
+      if (direction === "left") for (const node of nodes) node.x = 700 - node.x - node.w;
+      if (direction === "up") for (const node of nodes) node.y = 520 - node.y - node.h;
+      return nodes;
+    }
+    nodes = layout === "right" || layout === "left"
+        ? [
+          { id: "decision", type: "decision", text: "Choose a plan", x: 32, y: 225, w: 170, h: 58 },
+          { id: "option-a", parent: "decision", type: "option", text: "Option A", x: 270, y: 115, w: 130, h: 50 },
+          { id: "option-b", parent: "decision", type: "option", text: "Option B", x: 270, y: 345, w: 130, h: 50 },
+          { id: "benefit-a", parent: "option-a", type: "benefit", text: "Strong benefit", x: 505, y: 58, w: 135, h: 48 },
+          { id: "risk-a", parent: "option-a", type: "risk", text: "Possible risk", x: 505, y: 185, w: 135, h: 48 },
+          { id: "benefit-b", parent: "option-b", type: "benefit", text: "Useful benefit", x: 505, y: 292, w: 135, h: 48 },
+          { id: "risk-b", parent: "option-b", type: "risk", text: "Another risk", x: 505, y: 420, w: 135, h: 48 },
+        ]
+        : [
+          { id: "decision", type: "decision", text: "Choose a plan", x: 265, y: 30, w: 170, h: 58 },
+          { id: "option-a", parent: "decision", type: "option", text: "Option A", x: 125, y: 205, w: 130, h: 50 },
+          { id: "option-b", parent: "decision", type: "option", text: "Option B", x: 445, y: 205, w: 130, h: 50 },
+          { id: "benefit-a", parent: "option-a", type: "benefit", text: "Strong benefit", x: 40, y: 405, w: 135, h: 48 },
+          { id: "risk-a", parent: "option-a", type: "risk", text: "Possible risk", x: 205, y: 405, w: 135, h: 48 },
+          { id: "benefit-b", parent: "option-b", type: "benefit", text: "Useful benefit", x: 370, y: 405, w: 135, h: 48 },
+          { id: "risk-b", parent: "option-b", type: "risk", text: "Another risk", x: 535, y: 405, w: 135, h: 48 },
+        ];
+    if (layout === "left") {
+      for (const node of nodes) node.x = 700 - node.x - node.w;
+    }
+    if (layout === "up") {
+      for (const node of nodes) node.y = 520 - node.y - node.h;
+    }
+    return nodes;
+  }
+
+  renderPreview() {
+    const preview = this.previewEl;
+    preview.empty();
+    preview.classList.remove("is-dark", "is-paper", "is-system");
+    preview.addClass(`is-${this.background}`);
+    const svg = this.svgElement("svg", { viewBox: "0 0 700 520", "aria-label": `${layoutLabel(this.selectedLayout)} layout preview` });
+    const nodes = this.previewNodes();
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const linear = this.selectedLayout.startsWith("linear-");
+    const staggered = this.selectedLayout.startsWith("staggered-");
+    const [, sequenceDirection, branchDirection] = linear ? this.selectedLayout.split("-") : [];
+    const verticalSequence = linear && ["up", "down"].includes(sequenceDirection);
+    const left = this.selectedLayout === "left";
+    const up = this.selectedLayout === "up";
+    const anchor = (item, direction, outgoing) => {
+      if (direction === "right") return { x: outgoing ? item.x + item.w : item.x, y: item.y + item.h / 2 };
+      if (direction === "left") return { x: outgoing ? item.x : item.x + item.w, y: item.y + item.h / 2 };
+      if (direction === "down") return { x: item.x + item.w / 2, y: outgoing ? item.y + item.h : item.y };
+      return { x: item.x + item.w / 2, y: outgoing ? item.y : item.y + item.h };
+    };
+    for (const node of nodes) {
+      const parent = node.parent ? byId.get(node.parent) : null;
+      if (!parent) continue;
+      let d;
+      if (linear) {
+        if (verticalSequence) {
+          const goesLeft = branchDirection === "left";
+          const startX = goesLeft ? parent.x + parent.w - 16 : parent.x + 16;
+          const startY = sequenceDirection === "up" ? parent.y : parent.y + parent.h;
+          const endX = goesLeft ? node.x + node.w : node.x;
+          const endY = node.y + node.h / 2;
+          d = `M ${startX} ${startY} L ${startX} ${endY} L ${endX} ${endY}`;
+        } else {
+          const branchUp = branchDirection === "up";
+          const startX = sequenceDirection === "left" ? parent.x : parent.x + parent.w;
+          const startY = branchUp ? parent.y + parent.h - 16 : parent.y + 16;
+          const endX = node.x + node.w / 2;
+          const endY = branchUp ? node.y + node.h : node.y;
+          d = `M ${startX} ${startY} L ${endX} ${startY} L ${endX} ${endY}`;
+        }
+      } else if (staggered) {
+        const trunkDirection = this.selectedLayout.slice("staggered-".length);
+        const direction = node.branchDirection;
+        const start = anchor(parent, parent.type === "decision" ? trunkDirection : direction, true);
+        const end = anchor(node, direction, false);
+        if (parent.type === "decision") {
+          d = ["left", "right"].includes(trunkDirection)
+            ? `M ${start.x} ${start.y} L ${end.x} ${start.y} L ${end.x} ${end.y}`
+            : `M ${start.x} ${start.y} L ${start.x} ${end.y} L ${end.x} ${end.y}`;
+        } else {
+          const middleX = (start.x + end.x) / 2;
+          const middleY = (start.y + end.y) / 2;
+          d = ["left", "right"].includes(direction)
+            ? `M ${start.x} ${start.y} C ${middleX} ${start.y}, ${middleX} ${end.y}, ${end.x} ${end.y}`
+            : `M ${start.x} ${start.y} C ${start.x} ${middleY}, ${end.x} ${middleY}, ${end.x} ${end.y}`;
+        }
+      } else if (this.selectedLayout === "right" || this.selectedLayout === "left") {
+        const startX = left ? parent.x : parent.x + parent.w;
+        const endX = left ? node.x + node.w : node.x;
+        const startY = parent.y + parent.h / 2;
+        const endY = node.y + node.h / 2;
+        const middleX = (startX + endX) / 2;
+        d = `M ${startX} ${startY} C ${middleX} ${startY}, ${middleX} ${endY}, ${endX} ${endY}`;
+      } else {
+        const startX = parent.x + parent.w / 2;
+        const endX = node.x + node.w / 2;
+        const startY = up ? parent.y : parent.y + parent.h;
+        const endY = up ? node.y + node.h : node.y;
+        const middleY = (startY + endY) / 2;
+        d = `M ${startX} ${startY} C ${startX} ${middleY}, ${endX} ${middleY}, ${endX} ${endY}`;
+      }
+      svg.appendChild(this.svgElement("path", { d, class: `kdh-layout-preview-line is-${node.type}` }));
+    }
+    for (const node of nodes) {
+      svg.appendChild(this.svgElement("rect", { x: node.x, y: node.y, width: node.w, height: node.h, rx: 9, class: `kdh-layout-preview-node is-${node.type}` }));
+      const type = this.svgElement("text", { x: node.x + node.w / 2, y: node.y + 18, class: "kdh-layout-preview-type" });
+      type.textContent = node.type.toUpperCase();
+      const label = this.svgElement("text", { x: node.x + node.w / 2, y: node.y + 37, class: "kdh-layout-preview-label" });
+      label.textContent = node.text;
+      svg.append(type, label);
+    }
+    preview.appendChild(svg);
+  }
+
+  onClose() { this.contentEl.empty(); }
+}
+
+class CreateDecisionModal extends Modal {
+  constructor(app, settings, onSubmit) {
+    super(app);
+    this.settings = settings;
+    this.onSubmit = onSubmit;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    this.modalEl.addClass("kdh-create-decision-window");
+    contentEl.createEl("h2", { text: "Create decision" });
+    let title = "What needs to be decided?";
+    let templateId = "blank";
+
+    const titleSetting = new Setting(contentEl).setName("Decision");
+    titleSetting.addText((text) => {
+      text.setValue(title).onChange((value) => { title = value; });
+      window.setTimeout(() => { text.inputEl.focus(); text.inputEl.select(); }, 0);
+    });
+
+    const templateSetting = new Setting(contentEl).setName("Starting template").setDesc(DECISION_TEMPLATES.blank.description);
+    templateSetting.addDropdown((dropdown) => {
+      for (const [id, template] of Object.entries(DECISION_TEMPLATES)) dropdown.addOption(id, template.name);
+      dropdown.setValue(templateId).onChange((value) => {
+        templateId = DECISION_TEMPLATES[value] ? value : "blank";
+        templateSetting.setDesc(DECISION_TEMPLATES[templateId].description);
+      });
+    });
+    templateSetting.addButton((button) => button.setButtonText("Preview").onClick(() => {
+      const cleanTitle = title.trim() || "What needs to be decided?";
+      const map = createDecisionMapFromTemplate(this.settings, cleanTitle, templateId);
+      new DecisionTemplatePreviewModal(this.app, map, DECISION_TEMPLATES[templateId].name).open();
+    }));
+
+    const submit = () => {
+      const cleanTitle = title.trim();
+      if (!cleanTitle) {
+        new Notice("Enter the decision.");
+        return;
+      }
+      this.close();
+      this.onSubmit(cleanTitle, templateId);
+    };
+    titleSetting.controlEl.querySelector("input")?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.isComposing) return;
+      event.preventDefault();
+      submit();
+    });
+    new Setting(contentEl)
+      .addButton((button) => button.setButtonText("Cancel").onClick(() => this.close()))
+      .addButton((button) => button.setButtonText("Create").setCta().onClick(submit));
+  }
+
+  onClose() { this.contentEl.empty(); }
 }
 
 class NodeEditorModal extends Modal {
@@ -99,6 +574,7 @@ class NodeEditorModal extends Modal {
     this.impact = Math.max(1, options.impact || 1);
     this.isConstraint = Boolean(options.isConstraint);
     this.subOptionMode = options.subOptionMode || "alternative";
+    this.notes = String(options.notes || "");
     this.hasSubOptions = Boolean(options.hasSubOptions);
     this.allowedTypes = options.allowedTypes || null;
     this.isRoot = Boolean(options.isRoot);
@@ -116,6 +592,7 @@ class NodeEditorModal extends Modal {
     let typeHelp;
     let scoreBox;
     let optionBox;
+    let evidenceBox;
     let dealBreakerGroup;
 
     const renderDealBreaker = () => {
@@ -168,6 +645,26 @@ class NodeEditorModal extends Modal {
           .onChange((value) => { this.subOptionMode = value; }));
     };
 
+    const renderEvidenceControls = () => {
+      if (!evidenceBox) return;
+      evidenceBox.empty();
+      if (this.type !== "benefit" && this.type !== "risk") return;
+      evidenceBox.createDiv({
+        cls: "kdh-evidence-help",
+        text: "Optional context for why you chose these ratings.",
+      });
+      new Setting(evidenceBox)
+        .setName("Supporting notes")
+        .setDesc("Optional details that support this rating")
+        .addTextArea((field) => {
+          field
+            .setPlaceholder("What supports this rating?")
+            .setValue(this.notes)
+            .onChange((value) => { this.notes = value; });
+          field.inputEl.rows = 5;
+        });
+    };
+
     const topLine = formEl.createDiv({ cls: `kdh-editor-topline${this.isRoot ? " is-root" : ""}` });
     if (!this.isRoot) {
       const connectionGroup = topLine.createDiv({ cls: "kdh-topline-group kdh-connection-group" });
@@ -200,6 +697,7 @@ class NodeEditorModal extends Modal {
       if (typeHelp) typeHelp.setText(TYPE_GUIDANCE[this.type] || "");
       renderScoreControls();
       renderOptionControls();
+      renderEvidenceControls();
       renderDealBreaker();
     });
 
@@ -212,22 +710,23 @@ class NodeEditorModal extends Modal {
     renderDealBreaker();
     typeHelp = formEl.createDiv({ cls: "kdh-type-help", text: TYPE_GUIDANCE[this.type] || "" });
 
-    let textarea;
+    let textInput;
     new Setting(formEl)
       .setClass("kdh-text-setting")
       .setName("Node text")
-      .addTextArea((field) => {
-        textarea = field.inputEl;
+      .addText((field) => {
+        textInput = field.inputEl;
         field
           .setPlaceholder(this.isRoot ? "What needs to be decided?" : "Enter the option, benefit, or risk")
           .setValue(this.text)
           .onChange((value) => { this.text = value; });
-        textarea.rows = 5;
       });
 
     scoreBox = formEl.createDiv({ cls: "kdh-score-controls" });
+    evidenceBox = formEl.createDiv({ cls: "kdh-evidence-controls" });
     optionBox = formEl.createDiv({ cls: "kdh-option-controls" });
     renderScoreControls();
+    renderEvidenceControls();
     renderOptionControls();
 
     const actions = contentEl.createDiv({ cls: "kdh-editor-actions" });
@@ -240,6 +739,7 @@ class NodeEditorModal extends Modal {
         new Notice("Enter text for the node.");
         return;
       }
+      const isFactor = this.type === "benefit" || this.type === "risk";
       this.onSave({
         text,
         type: this.isRoot ? "decision" : this.type,
@@ -248,21 +748,24 @@ class NodeEditorModal extends Modal {
         impact: this.type === "benefit" || this.type === "risk" ? this.impact : 0,
         isConstraint: this.type === "risk" ? this.isConstraint : false,
         subOptionMode: this.type === "option" ? this.subOptionMode : "alternative",
+        notes: isFactor ? this.notes.trim() : "",
       });
       this.close();
     };
 
     saveButton.addEventListener("click", save);
-    textarea.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !(event.ctrlKey || event.metaKey)) {
+    textInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
         event.preventDefault();
         save();
       }
     });
-    setTimeout(() => textarea.focus(), 0);
+    setTimeout(() => textInput.focus(), 0);
   }
 
-  onClose() { this.contentEl.empty(); }
+  onClose() {
+    this.contentEl.empty();
+  }
 }
 
 class RelationshipModal extends Modal {
@@ -292,12 +795,43 @@ class RelationshipModal extends Modal {
   onClose() { this.contentEl.empty(); }
 }
 
+class CollapseToLevelModal extends Modal {
+  constructor(app, maximumLevel, initialLevel, canApply, onApply) {
+    super(app);
+    this.maximumLevel = Math.max(1, maximumLevel);
+    this.level = Math.min(this.maximumLevel, Math.max(1, initialLevel || 1));
+    this.canApply = canApply;
+    this.onApply = onApply;
+  }
+
+  onOpen() {
+    this.contentEl.createEl("h2", { text: "Collapse map to level" });
+    this.contentEl.createEl("p", { text: "Keep the chosen number of levels visible and collapse deeper branches." });
+    let applyButton;
+    const updateApply = () => { if (applyButton) applyButton.disabled = !this.canApply(this.level); };
+    new Setting(this.contentEl).setName("Visible levels").addDropdown((dropdown) => {
+      for (let level = 1; level <= this.maximumLevel; level += 1) dropdown.addOption(String(level), String(level));
+      dropdown.setValue(String(this.level)).onChange((value) => { this.level = Number(value); updateApply(); });
+    });
+    const actions = this.contentEl.createDiv({ cls: "kdh-editor-actions" });
+    actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
+    applyButton = actions.createEl("button", { text: "Apply", cls: "mod-cta" });
+    applyButton.addEventListener("click", () => {
+      this.onApply(this.level);
+      this.close();
+    });
+    updateApply();
+  }
+
+  onClose() { this.contentEl.empty(); }
+}
+
 class DecisionHelpModal extends Modal {
   onOpen() {
     this.modalEl.addClass("kdh-help-modal");
     const { contentEl } = this;
     contentEl.addClass("kdh-help-content");
-    contentEl.createEl("h2", { text: "Simple Decision Helper" });
+    contentEl.createEl("h2", { text: "The Kempf Simple Decision Helper" });
     contentEl.createEl("p", { cls: "kdh-help-intro", text: "Build the decision from the top down, rate the likely benefits and risks, and compare the options. The result organizes your judgment; it does not guarantee the correct answer." });
 
     const section = (title, text, items = []) => {
@@ -332,6 +866,7 @@ class DecisionHelpModal extends Modal {
       "Risk: a possible cost, problem, or bad result of an option. Risks are final scoring factors and cannot have children.",
     ]);
     section("Rating benefits and risks", "Likelihood means how likely the result is. Impact means how much it would matter. Both run from 1 (very low) to 5 (very high). For example, rain might be likely (4) but have a small impact (2).");
+    section("Supporting evidence", "Benefits and risks can include Supporting notes. A paperclip marks factors with notes. Supporting notes explain a rating but do not change its score.");
     section("How scores work", "The helper uses the same consistent calculation for every choice. You only supply the two simple 1–5 ratings.");
     formula("Factor score", "Likelihood × Impact", "Each benefit or risk scores from 1 to 25.");
     formula("Option score", "((Σ Benefit Scores − Σ Risk Scores) ÷ (Number of Factors × 25)) × 100", "This puts every option on the same −100 to +100 scale, even when options have different numbers of factors.");
@@ -339,11 +874,16 @@ class DecisionHelpModal extends Modal {
     section("Reading the scale", "+100 is entirely favorable, −100 is entirely unfavorable, and a score near 0 is balanced. The score helps comparison; it does not make the choice for you.");
     section("Sub-options: Single Path or All Paths", "Use Single Path when the child options are alternatives, such as drive, take the bus, or walk. Use All Paths when every child is part of one plan, such as review notes, practice questions, and get enough sleep.");
     section("Sub-option badges", "An option with child options is marked SINGLE PATH or ALL PATHS, so the tree shows whether it will select the strongest child path or combine every child path.");
+    section("Starting templates", "When creating a decision, choose Blank, Simple Choice, Buy or Keep, Education/Training, or Home Improvement. Preview shows the Decision, Options, Benefits, and Risks before the file is created. Template nodes are ordinary editable nodes; replace or remove anything that does not fit your decision.");
+    section("Incomplete All Paths plans", "If a required All Paths sub-option has no rated benefits or risks, the summary names that path and warns that it was excluded from the numerical score. Evaluate every required path before treating the plan as complete.");
     section("Deal-breakers", "Turn this on only for a risk that makes an option unacceptable regardless of its numerical score—for example, an option that exceeds a firm budget limit.");
-    section("Reading the Decision summary", "The comparison chart is ordered from strongest to weakest. Red extends left for risks and green extends right for benefits. Click an option in the chart to select and reveal the same node in the tree. Not evaluated means an option has no benefits or risks yet and is excluded from the recommendation.");
+    section("Reading the Decision summary", "The comparison chart is ordered from strongest to weakest. Red extends left for risks and green extends right for benefits. Click an option in the chart to select and reveal the same node in the tree. Not evaluated means an option has no benefits or risks yet and is excluded from the recommendation. The summary remembers whether it was expanded or collapsed when you reopen the decision. Pin selected node information while inspecting other nodes, or collapse it to save space.");
     section("Mouse and touch", "", [
       "Drag empty background with the left or middle mouse button to pan.",
       "Use the mouse wheel or a two-finger pinch to zoom.",
+      "Use Fit decision to center and scale every currently visible node.",
+      "Use Search nodes or Ctrl/Cmd+F to find node titles; Enter and Shift+Enter move between matches.",
+      "Use the minus or numbered badge in a parent node's upper-right corner to collapse or expand its descendants. The node stays under the pointer.",
       "Drag a node onto a valid Decision or Option node to move its entire branch.",
       "Double-click a node to edit it.",
       "Right-click a node to move, copy, paste, edit, or delete its branch.",
@@ -352,15 +892,18 @@ class DecisionHelpModal extends Modal {
     ]);
     section("Keyboard", "", [
       "Arrow keys move through the visible tree.",
-      "Enter edits the selected node.",
-      "Tab adds an Option beneath a selected Decision or Option.",
-      "With an Option selected, B adds a Benefit and D adds a Drawback.",
+      "Enter or Tab adds a connected item beneath the selected Decision or Option.",
+      "F2 edits the selected node.",
+      "With an Option selected, B adds a Benefit and D adds a Risk.",
+      "Space collapses or expands the selected parent node.",
       "Delete removes the selected branch after confirmation.",
-      "Inside the node editor, Enter saves and Ctrl/Cmd+Enter inserts a new line.",
+      "Inside the node editor, Enter saves the single-line node title. Longer context belongs in Supporting notes.",
       "Ctrl/Cmd+Z undoes; Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y redoes.",
     ]);
-    section("Files and toolbar", "Each decision is its own .ksdh vault file. Global settings control the defaults for new decisions. The toolbar settings button opens options for the current decision, including warnings, node score labels, sibling spacing, and level spacing. The file-plus button starts another decision; the curved arrows undo and redo; minus and plus change zoom; the question mark opens this guide.");
-    section("Import and export", "JSON is the complete backup format and the only format that can restore a decision. Markdown creates a readable report without hidden backup data. SVG and JPG create shareable images, while PDF creates a printable one-page overview.");
+    section("Files and toolbar", "Each decision is its own .ksdh vault file. Global settings control the defaults for new decisions and provide separate controls for choosing an existing save folder or creating a nested folder. The toolbar includes Fit decision and Search nodes alongside current-decision options for warnings, node score labels, dimming, and spacing. The file-plus button starts another decision; the curved arrows undo and redo; minus and plus change zoom; the question mark opens this guide.");
+    section("Layouts", "Change layout opens a visual picker modeled on Mind Map. Its 16 arrangements include four Standard directions, four Staggered trunk directions, and eight Linear sequence-and-branch combinations. Inspect the preview, then Apply the layout or Cancel without changing the decision. Layout changes never alter nodes, ratings, or scores. Blue, green, and red branch lines identify Options, Benefits, and Risks.");
+    section("Collapsed, focused, and locked branches", "Collapsing a branch hides its descendants. The node and background menus can collapse the entire map, expand it, or collapse it to a chosen visible level. Focus branch keeps the chosen node, its descendants, and its path back to the Decision visible. Lock branch protects that node and everything beneath it from editing, moving, pasting, or deletion until unlocked. These view actions do not change scores or remove nodes.");
+    section("Import and export", "JSON is the complete backup format and the only format that can restore a decision. Markdown creates a readable report without hidden backup data. SVG, JPG, and PDF document export the visible map. Presentation PDF creates a polished one-page Letter-size brief with the decision, recommendation, comparison, warning, strongest benefits, greatest risks, and leading option snapshots; it opens a preview before the save dialog.");
   }
 
   onClose() { this.contentEl.empty(); }
@@ -373,6 +916,8 @@ class DecisionOptionsModal extends Modal {
     this.values = {
       showWarnings: view.map.showWarnings !== false,
       showScoreLabels: view.map.showScoreLabels !== false,
+      dimUnselectedBranches: view.map.dimUnselectedBranches !== false,
+      dimStrength: Math.min(90, Math.max(0, Number(view.map.dimStrength) || 0)),
       siblingSpacing: view.map.siblingSpacing || "regular",
       levelSpacing: view.map.levelSpacing || "regular",
     };
@@ -382,6 +927,15 @@ class DecisionOptionsModal extends Modal {
     const { contentEl } = this;
     contentEl.createEl("h2", { text: "Decision options" });
     contentEl.createEl("p", { text: "These settings apply only to this decision file." });
+    const layoutSetting = new Setting(contentEl)
+      .setName("Layout")
+      .setDesc(`Current: ${layoutLabel(this.view.map.layout)}`)
+      .addButton((button) => button.setButtonText("Change layout…").onClick(() => {
+        new DecisionLayoutPickerModal(this.app, this.view.map.layout, this.view.map.background, async (layout) => {
+          await this.view.applyLayout(layout);
+          layoutSetting.setDesc(`Current: ${layoutLabel(layout)}`);
+        }).open();
+      }));
     new Setting(contentEl)
       .setName("Show instructional warnings")
       .setDesc("Show limited-evidence and sensitivity notices")
@@ -394,6 +948,20 @@ class DecisionOptionsModal extends Modal {
       .addToggle((toggle) => toggle
         .setValue(this.values.showScoreLabels)
         .onChange((value) => { this.values.showScoreLabels = value; }));
+    new Setting(contentEl)
+      .setName("Dim unselected branches")
+      .setDesc("When a non-root node is selected, fade branches outside its path and descendants")
+      .addToggle((toggle) => toggle
+        .setValue(this.values.dimUnselectedBranches)
+        .onChange((value) => { this.values.dimUnselectedBranches = value; }));
+    new Setting(contentEl)
+      .setName("Dim strength")
+      .setDesc("0% leaves unrelated branches unchanged; 90% makes them very faint")
+      .addSlider((slider) => slider
+        .setLimits(0, 90, 5)
+        .setValue(this.values.dimStrength)
+        .setDynamicTooltip()
+        .onChange((value) => { this.values.dimStrength = value; }));
     const addSpacing = (name, description, key) => {
       new Setting(contentEl)
         .setName(name)
@@ -428,60 +996,56 @@ class DecisionOptionsModal extends Modal {
   onClose() { this.contentEl.empty(); }
 }
 
-class FolderSuggestModal extends FuzzySuggestModal {
-  constructor(app, onChoose) {
+class PresentationPreviewModal extends Modal {
+  constructor(app, options) {
     super(app);
-    this.onChoose = onChoose;
-    this.setPlaceholder("Choose a folder for new decision files");
-  }
-
-  getItems() {
-    return this.app.vault.getAllLoadedFiles()
-      .filter((item) => item instanceof TFolder)
-      .sort((a, b) => a.path.localeCompare(b.path));
-  }
-
-  getItemText(folder) { return folder.path || "Vault root"; }
-  onChooseItem(folder) { this.onChoose(folder.path); }
-}
-
-class CreateFolderModal extends Modal {
-  constructor(app, onCreate) {
-    super(app);
-    this.onCreate = onCreate;
+    this.pdf = options.pdf;
+    this.svgs = options.svgs;
+    this.suggestedName = options.suggestedName;
+    this.onSave = options.onSave;
+    this.previewUrls = [];
   }
 
   onOpen() {
+    this.modalEl.addClass("kdh-presentation-preview-modal");
     const { contentEl } = this;
-    contentEl.createEl("h2", { text: "Create decision folder" });
-    contentEl.createEl("p", { text: "Enter a vault path, such as Decisions or Work/Decisions." });
-    let input;
-    new Setting(contentEl).setName("Folder path").addText((text) => {
-      input = text.inputEl;
-      text.setPlaceholder("Decisions");
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Presentation preview" });
+    contentEl.createEl("p", { cls: "kdh-presentation-preview-help", text: "Letter size · 8.5 × 11 inches · one page" });
+    const stage = contentEl.createDiv({ cls: "kdh-presentation-preview-stage" });
+    this.svgs.forEach((svg, index) => {
+      const wrapper = stage.createDiv({ cls: "kdh-presentation-preview-sheet" });
+      wrapper.createDiv({ cls: "kdh-presentation-preview-page-label", text: `Page ${index + 1} of ${this.svgs.length}` });
+      const page = wrapper.createDiv({ cls: "kdh-presentation-preview-page" });
+      const previewUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+      this.previewUrls.push(previewUrl);
+      page.createEl("img", { attr: { src: previewUrl, alt: `Preview of decision presentation page ${index + 1}` } });
     });
-    const actions = contentEl.createDiv({ cls: "kdh-editor-actions" });
+
+    const footer = contentEl.createDiv({ cls: "kdh-presentation-preview-footer" });
+    footer.createDiv({ cls: "kdh-presentation-preview-filename", text: this.suggestedName });
+    const actions = footer.createDiv({ cls: "kdh-presentation-preview-actions" });
     actions.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
-    const create = async () => {
-      const path = input.value.trim();
-      if (!path) {
-        new Notice("Enter a folder path.");
-        return;
-      }
-      const created = await this.onCreate(path);
-      if (created) this.close();
-    };
-    actions.createEl("button", { text: "Create and use", cls: "mod-cta" }).addEventListener("click", create);
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        create();
+    const saveButton = actions.createEl("button", { text: "Save PDF", cls: "mod-cta" });
+    saveButton.addEventListener("click", async () => {
+      saveButton.disabled = true;
+      try {
+        const saved = await this.onSave(this.pdf, this.suggestedName);
+        if (saved) this.close();
+      } catch (error) {
+        console.error("Decision Helper presentation save failed", error);
+        new Notice("The presentation PDF could not be saved.");
+      } finally {
+        saveButton.disabled = false;
       }
     });
-    setTimeout(() => input.focus(), 0);
   }
 
-  onClose() { this.contentEl.empty(); }
+  onClose() {
+    this.previewUrls.forEach((url) => URL.revokeObjectURL(url));
+    this.previewUrls = [];
+    this.contentEl.empty();
+  }
 }
 
 class DecisionHelperSettingTab extends PluginSettingTab {
@@ -493,65 +1057,34 @@ class DecisionHelperSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Kempf's Simple Decision Helper" });
-    new Setting(containerEl)
-      .setName("Default decision folder")
-      .setDesc(`New .${FILE_EXTENSION} files will be saved in: ${this.plugin.settings.defaultFolder || "Vault root"}`)
-      .addButton((button) => button
-        .setButtonText("Choose folder")
-        .onClick(() => new FolderSuggestModal(this.app, async (path) => {
-          this.plugin.settings.defaultFolder = path;
-          await this.plugin.saveSettings();
-          this.display();
-        }).open()))
-      .addButton((button) => button
-        .setButtonText("New folder")
-        .onClick(() => new CreateFolderModal(this.app, async (path) => {
-          const createdPath = await this.plugin.createFolderPath(path);
-          if (createdPath === null) return false;
-          this.plugin.settings.defaultFolder = createdPath;
-          await this.plugin.saveSettings();
-          this.display();
-          return true;
-        }).open()))
-      .addExtraButton((button) => button
-        .setIcon("rotate-ccw")
-        .setTooltip("Use vault root")
-        .onClick(async () => {
-          this.plugin.settings.defaultFolder = "";
-          await this.plugin.saveSettings();
-          this.display();
-        }));
-
-    containerEl.createEl("h3", { text: "New decision defaults" });
+    containerEl.createEl("h2", { text: "The Kempf Simple Decision Helper options" });
     new Setting(containerEl)
       .setName("Default background")
-      .setDesc("Background used when a new decision is created")
+      .setDesc("Background used when creating a new .ksdh decision.")
       .addDropdown((dropdown) => dropdown
-        .addOption("system", "Follow Obsidian")
+        .addOption("system", "Obsidian Default")
         .addOption("dark", "Dark")
-        .addOption("light", "Light")
-        .setValue(this.plugin.settings.defaultBackground)
+        .addOption("paper", "Paper")
+        .setValue(normalizeBackground(this.plugin.settings.defaultBackground))
         .onChange(async (value) => {
           this.plugin.settings.defaultBackground = value;
           await this.plugin.saveSettings();
         }));
     new Setting(containerEl)
       .setName("Default layout")
-      .setDesc("Direction used by new decision trees")
-      .addDropdown((dropdown) => dropdown
-        .addOption("down", "Top-down")
-        .addOption("up", "Bottom-up")
-        .addOption("right", "Left-to-right")
-        .addOption("left", "Right-to-left")
-        .setValue(this.plugin.settings.defaultLayout)
-        .onChange(async (value) => {
-          this.plugin.settings.defaultLayout = value;
-          await this.plugin.saveSettings();
+      .setDesc("Layout used when creating a new .ksdh decision. Existing decisions keep their own layout.")
+      .addButton((button) => button
+        .setButtonText(`Change… (${layoutLabel(this.plugin.settings.defaultLayout)})`)
+        .onClick(() => {
+          new DecisionLayoutPickerModal(this.app, this.plugin.settings.defaultLayout, this.plugin.settings.defaultBackground, async (layout) => {
+            this.plugin.settings.defaultLayout = layout;
+            await this.plugin.saveSettings();
+            this.display();
+          }).open();
         }));
     new Setting(containerEl)
       .setName("Default zoom")
-      .setDesc("Initial view used by new decisions")
+      .setDesc("Initial view used when opening a newly created decision.")
       .addDropdown((dropdown) => dropdown
         .addOption("0.75", "75%")
         .addOption("1", "100%")
@@ -563,7 +1096,7 @@ class DecisionHelperSettingTab extends PluginSettingTab {
         }));
     new Setting(containerEl)
       .setName("Default sub-option behavior")
-      .setDesc("How newly created options handle their sub-options")
+      .setDesc("How Options in new decisions evaluate their child Options.")
       .addDropdown((dropdown) => dropdown
         .addOption("alternative", "Single Path")
         .addOption("combined", "All Paths")
@@ -574,13 +1107,59 @@ class DecisionHelperSettingTab extends PluginSettingTab {
         }));
     new Setting(containerEl)
       .setName("Confirm before deleting")
-      .setDesc("Ask before deleting a node and everything beneath it")
+      .setDesc("Ask before deleting a node and everything beneath it.")
       .addToggle((toggle) => toggle
         .setValue(this.plugin.settings.confirmDelete)
         .onChange(async (value) => {
           this.plugin.settings.confirmDelete = value;
           await this.plugin.saveSettings();
         }));
+
+    const folders = this.app.vault.getAllLoadedFiles()
+      .filter((file) => file instanceof TFolder && file.path !== "/")
+      .sort((a, b) => a.path.localeCompare(b.path));
+
+    containerEl.createEl("h3", { text: "New decision folder" });
+
+    new Setting(containerEl)
+      .setName("Use an existing folder")
+      .setDesc("Choose where new .ksdh decisions are saved. To use a folder that does not exist yet, create it below.")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("", "Vault root");
+        folders.forEach((folder) => dropdown.addOption(folder.path, folder.path));
+        const selectedFolder = folders.some((folder) => folder.path === this.plugin.settings.defaultFolder)
+          ? this.plugin.settings.defaultFolder
+          : "";
+        dropdown.setValue(selectedFolder || "");
+        dropdown.onChange(async (value) => {
+          this.plugin.settings.defaultFolder = value;
+          await this.plugin.saveSettings();
+        });
+      });
+
+    let newFolderPath = "";
+    new Setting(containerEl)
+      .setName("Create a new folder")
+      .setDesc("Type a folder name or path. The plugin will create it in your vault and immediately use it for new decisions. Nested folders are supported.")
+      .addText((text) => {
+        text.setPlaceholder("Decisions or Projects/Decisions");
+        text.onChange((value) => { newFolderPath = value; });
+      })
+      .addButton((button) => {
+        button.setButtonText("Create folder and use it").setCta().onClick(async () => {
+          const cleanPath = normalizePath(newFolderPath.trim().replace(/^\/+|\/+$/g, ""));
+          if (!cleanPath || cleanPath === ".") {
+            new Notice("Enter a folder name first.");
+            return;
+          }
+          const createdPath = await this.plugin.createFolderPath(cleanPath);
+          if (createdPath === null) return;
+          this.plugin.settings.defaultFolder = createdPath;
+          await this.plugin.saveSettings();
+          new Notice(`New decisions will be saved in ${createdPath}.`);
+          this.display();
+        });
+      });
   }
 }
 
@@ -600,10 +1179,15 @@ class DecisionMapView extends TextFileView {
     this.touchSuppressUntil = 0;
     this.longPressCancellers = new Set();
     this.activeMenu = null;
+    this.focusedId = null;
+    this.pinnedInfoNodeId = null;
+    this.searchPanelEl = null;
+    this.searchMatches = [];
+    this.searchIndex = -1;
   }
 
   getViewType() { return VIEW_TYPE; }
-  getDisplayText() { return this.file?.basename || "Decision Helper"; }
+  getDisplayText() { return this.file?.basename || "The Kempf Simple Decision Helper"; }
   getIcon() { return "git-branch"; }
 
   getViewData() { return this.unreadableData ?? JSON.stringify({ ...this.map, formatVersion: FORMAT_VERSION }, null, 2); }
@@ -617,11 +1201,30 @@ class DecisionMapView extends TextFileView {
         if (!node?.id || ids.has(node.id) || !NODE_TYPES[node.type]) throw new Error("Invalid or duplicate node");
         ids.add(node.id);
         node.text = String(node.text || "Untitled");
+        const isFactor = node.type === "benefit" || node.type === "risk";
+        node.notes = isFactor ? String(node.notes || "") : "";
+        delete node.relatedNotes;
+        delete node.sourceUrl;
         node.childIds = Array.isArray(node.childIds) ? node.childIds : [];
       }
       const rootNode = parsed.nodes.find((node) => node.id === parsed.rootId);
       if (!rootNode || rootNode.type !== "decision") throw new Error("Missing Decision node");
-      this.map = { ...emptyMap(), ...parsed, formatVersion: FORMAT_VERSION };
+      const storedCanvasSpace = Number(parsed.canvasSpace);
+      const previousCanvasSpace = storedCanvasSpace === CANVAS_SPACE
+        ? CANVAS_SPACE
+        : (LEGACY_CANVAS_SPACES.has(storedCanvasSpace) ? storedCanvasSpace : 1200);
+      const canvasShift = CANVAS_SPACE - previousCanvasSpace;
+      const savedZoom = Math.max(MIN_ZOOM, Math.min(2, Number(parsed.zoom) || 1));
+      if (parsed.nodeInfoCollapsed === undefined && typeof parsed.selectedDetailsOpen === "boolean") {
+        parsed.nodeInfoCollapsed = !parsed.selectedDetailsOpen;
+      }
+      delete parsed.selectedDetailsOpen;
+      this.map = { ...emptyMap(), ...parsed, layout: normalizeLayout(parsed.layout), background: normalizeBackground(parsed.background), canvasSpace: CANVAS_SPACE, formatVersion: FORMAT_VERSION };
+      this.pinnedInfoNodeId = null;
+      if (canvasShift && Number.isFinite(parsed.scrollLeft) && Number.isFinite(parsed.scrollTop)) {
+        this.map.scrollLeft = Math.max(0, parsed.scrollLeft + canvasShift * savedZoom);
+        this.map.scrollTop = Math.max(0, parsed.scrollTop + canvasShift * savedZoom);
+      }
       for (const node of this.map.nodes) {
         delete node.isEndpoint;
         if (node.type === "benefit" || node.type === "risk") {
@@ -662,6 +1265,11 @@ class DecisionMapView extends TextFileView {
       };
       walk(rootNode);
       if (visited.size !== this.map.nodes.length) throw new Error("The decision contains disconnected nodes");
+      for (const node of this.map.nodes) {
+        node.collapsed = Boolean(node.collapsed && node.childIds.length);
+        node.locked = Boolean(node.locked);
+      }
+      if (this.focusedId && !byId.has(this.focusedId)) this.focusedId = null;
       this.unreadableData = null;
       this.loadError = null;
     } catch (error) {
@@ -701,6 +1309,8 @@ class DecisionMapView extends TextFileView {
   async onClose() {
     clearTimeout(this.zoomSaveTimer);
     clearTimeout(this.promptTimer);
+    this.closeNodeSearch(false);
+    this.clearLongPressHandlers();
     this.viewOpened = false;
     await super.onClose();
   }
@@ -713,13 +1323,18 @@ class DecisionMapView extends TextFileView {
   }
 
   render() {
+    this.clearLongPressHandlers();
     const root = this.containerEl.children[1];
     root.empty();
     root.addClass("kdh-view");
-    root.removeClass("kdh-background-light");
+    root.toggleClass("kdh-layout-linear", String(this.map.layout).startsWith("linear-"));
+    root.removeClass("kdh-background-paper");
     root.removeClass("kdh-background-dark");
-    const background = this.map.background || "system";
-    if (background === "light" || background === "dark") root.addClass(`kdh-background-${background}`);
+    const background = normalizeBackground(this.map.background);
+    if (background === "paper" || background === "dark") root.addClass(`kdh-background-${background}`);
+    const dimStrength = Math.min(90, Math.max(0, Number(this.map.dimStrength) || 0));
+    root.style.setProperty("--kdh-dim-opacity", String(1 - dimStrength / 100));
+    this.syncSearchPanelBackground();
 
     if (this.loadError) {
       const errorBox = root.createDiv({ cls: "kdh-empty" });
@@ -731,7 +1346,7 @@ class DecisionMapView extends TextFileView {
       const empty = root.createDiv({ cls: "kdh-empty" });
       empty.createEl("h2", { text: "Start a decision map" });
       empty.createEl("p", { text: "Begin with the decision, then add options with their benefits and risks." });
-      empty.createEl("button", { text: "Enter decision", cls: "mod-cta" })
+      empty.createEl("button", { text: "Create decision", cls: "mod-cta" })
         .addEventListener("click", () => this.promptForDecision());
       return;
     }
@@ -741,7 +1356,7 @@ class DecisionMapView extends TextFileView {
     const canvas = scroller.createDiv({ cls: "kdh-canvas" });
     const layout = this.calculateLayout();
     this.nodePositions = layout.positions;
-    const zoom = Math.max(0.2, Math.min(2, this.map.zoom || 1));
+    const zoom = Math.max(MIN_ZOOM, Math.min(2, this.map.zoom || 1));
     this.map.zoom = zoom;
     canvas.style.width = `${layout.width}px`;
     canvas.style.height = `${layout.height}px`;
@@ -779,7 +1394,7 @@ class DecisionMapView extends TextFileView {
         const maxX = Math.max(...positioned.map((item) => item.x + CARD_WIDTH));
         const minY = Math.min(...positioned.map((item) => item.y));
         const maxY = Math.max(...positioned.map((item) => item.y + CARD_HEIGHT + SCORE_FOOTER_HEIGHT));
-        const fittedZoom = Math.max(0.2, Math.min(1, (scroller.clientWidth - 90) / (maxX - minX), (scroller.clientHeight - 90) / (maxY - minY)));
+        const fittedZoom = Math.max(MIN_ZOOM, Math.min(1, (scroller.clientWidth - 90) / (maxX - minX), (scroller.clientHeight - 90) / (maxY - minY)));
         this.map.zoom = fittedZoom;
         this.map.fitOnOpen = false;
         canvas.style.zoom = String(fittedZoom);
@@ -817,7 +1432,23 @@ class DecisionMapView extends TextFileView {
     this.zoomLabel = toolbar.createSpan({ cls: "kdh-zoom-label" });
     addButton("zoom-in", "Zoom in", () => this.changeZoom(1.1));
     toolbar.createDiv({ cls: "kdh-toolbar-divider" });
+    addButton("maximize", "Fit decision", () => this.fitDecision());
+    addButton("search", "Search nodes", () => this.showNodeSearch());
     addButton("settings-2", "Decision options", () => new DecisionOptionsModal(this.app, this).open());
+    if (this.focusedId) {
+      const focused = this.getNode(this.focusedId);
+      if (focused) {
+        const hiddenCount = this.map.nodes.filter((node) => !this.isVisibleInFocus(node.id)).length;
+        const status = toolbar.createDiv({ cls: "kdh-focus-status" });
+        status.createSpan({
+          cls: "kdh-focus-status-label",
+          text: `Focused: ${focused.text} · ${hiddenCount} hidden`,
+          attr: { title: `Focused branch: ${focused.text}` },
+        });
+        status.createEl("button", { text: "Unfocus", cls: "kdh-focus-exit" })
+          .addEventListener("click", () => this.clearBranchFocus());
+      }
+    }
     toolbar.createDiv({ cls: "kdh-toolbar-spacer" });
     addButton("circle-help", "Help", () => new DecisionHelpModal(this.app).open());
   }
@@ -874,24 +1505,26 @@ class DecisionMapView extends TextFileView {
   }
 
   renderSummary(root) {
-    const panel = root.createDiv({ cls: `kdh-summary-panel${this.summaryCollapsed ? " is-collapsed" : ""}` });
+    const summaryCollapsed = this.map.summaryCollapsed === true;
+    const panel = root.createDiv({ cls: `kdh-summary-panel${summaryCollapsed ? " is-collapsed" : ""}` });
     this.summaryPanel = panel;
     const header = panel.createDiv({ cls: "kdh-summary-header" });
     header.createSpan({ text: "Decision summary" });
     const toggle = header.createEl("button", {
       cls: "clickable-icon",
-      attr: { "aria-label": this.summaryCollapsed ? "Expand decision summary" : "Collapse decision summary" },
+      attr: { "aria-label": summaryCollapsed ? "Expand decision summary" : "Collapse decision summary" },
     });
-    setIcon(toggle, this.summaryCollapsed ? "chevron-down" : "chevron-up");
+    setIcon(toggle, summaryCollapsed ? "chevron-down" : "chevron-up");
     toggle.addEventListener("click", () => {
-      this.summaryCollapsed = !this.summaryCollapsed;
+      this.map.summaryCollapsed = !summaryCollapsed;
+      this.saveMap();
       this.render();
     });
-    if (!this.summaryCollapsed) this.renderSummaryContent(panel);
+    if (!summaryCollapsed) this.renderSummaryContent(panel);
   }
 
   renderSummaryContent(panel = this.summaryPanel) {
-    if (!panel || this.summaryCollapsed) return;
+    if (!panel || this.map.summaryCollapsed === true) return;
     panel.querySelector(".kdh-summary-content")?.remove();
     const content = panel.createDiv({ cls: "kdh-summary-content" });
     this.summaryContentEl = content;
@@ -927,20 +1560,50 @@ class DecisionMapView extends TextFileView {
       }
     }
 
-    if (selected && selected.type !== "decision") {
-      const details = content.createEl("details", { cls: "kdh-selected-details" });
-      details.open = Boolean(this.map.selectedDetailsOpen);
-      details.addEventListener("toggle", () => {
-        this.map.selectedDetailsOpen = details.open;
-        this.saveMap();
-      });
-      details.createEl("summary", { text: "Selected node details" });
-      const detailBody = details.createDiv({ cls: "kdh-selected-details-body" });
-      this.renderSelectedNodeSummary(detailBody, selected);
+    let pinnedNode = this.pinnedInfoNodeId ? this.getNode(this.pinnedInfoNodeId) : null;
+    if (this.pinnedInfoNodeId && (!pinnedNode || pinnedNode.type === "decision")) {
+      this.pinnedInfoNodeId = null;
+      pinnedNode = null;
     }
+    const infoNode = pinnedNode || (selected?.type !== "decision" ? selected : null);
+    if (infoNode) this.renderNodeInfo(content, infoNode, Boolean(pinnedNode));
+  }
+
+  renderNodeInfo(content, node, pinned) {
+    const collapsed = this.map.nodeInfoCollapsed === true;
+    const box = content.createDiv({ cls: `kdh-selected-details${collapsed ? " is-collapsed" : ""}` });
+    const header = box.createDiv({ cls: "kdh-selected-details-header" });
+    header.createSpan({ text: pinned ? "Pinned node" : "Selected node" });
+    const actions = header.createDiv({ cls: "kdh-selected-details-actions" });
+    const pin = actions.createEl("button", {
+      cls: `clickable-icon kdh-node-info-pin${pinned ? " is-active" : ""}`,
+      attr: { "aria-label": pinned ? "Unpin node information" : "Pin node information" },
+    });
+    setIcon(pin, "pin");
+    pin.addEventListener("click", () => {
+      this.pinnedInfoNodeId = pinned ? null : node.id;
+      this.renderSummaryContent();
+    });
+    const collapse = actions.createEl("button", {
+      cls: "clickable-icon kdh-node-info-collapse",
+      attr: { "aria-label": collapsed ? "Expand node information" : "Collapse node information" },
+    });
+    setIcon(collapse, collapsed ? "chevron-down" : "chevron-up");
+    collapse.addEventListener("click", async () => {
+      this.map.nodeInfoCollapsed = !collapsed;
+      await this.saveMap();
+      this.renderSummaryContent();
+    });
+    if (collapsed) return;
+    const detailBody = box.createDiv({ cls: "kdh-selected-details-body" });
+    this.renderSelectedNodeSummary(detailBody, node);
   }
 
   selectFromSummary(node) {
+    if (this.focusedId && !this.isVisibleInFocus(node.id)) {
+      this.focusedId = null;
+      this.render();
+    }
     this.selectNode(node, true);
   }
 
@@ -959,11 +1622,56 @@ class DecisionMapView extends TextFileView {
     this.currentCanvas?.querySelectorAll(".kdh-node").forEach((element) => {
       const selected = element.dataset.nodeId === selectedId;
       element.toggleClass("is-selected", selected);
+      element.toggleClass("is-dimmed", this.shouldDimNode(element.dataset.nodeId));
       element.setAttribute("aria-selected", selected ? "true" : "false");
+    });
+    this.currentCanvas?.querySelectorAll(".kdh-line, .kdh-edge-label").forEach((element) => {
+      element.toggleClass("is-dimmed", this.shouldDimNode(element.dataset.nodeId));
     });
     this.summaryContentEl?.querySelectorAll(".kdh-comparison-row").forEach((element) => {
       element.toggleClass("is-selected", element.dataset.nodeId === selectedId);
     });
+  }
+
+  isDescendant(candidateId, ancestorId) {
+    let current = this.getNode(candidateId);
+    while (current?.parentId) {
+      if (current.parentId === ancestorId) return true;
+      current = this.getNode(current.parentId);
+    }
+    return false;
+  }
+
+  shouldDimNode(nodeId) {
+    if (this.map.dimUnselectedBranches === false) return false;
+    const selected = this.getNode(this.map.selectedId);
+    if (!selected?.parentId) return false;
+    if (nodeId === selected.id) return false;
+    if (this.isDescendant(nodeId, selected.id)) return false;
+    if (this.isDescendant(selected.id, nodeId)) return false;
+    return true;
+  }
+
+  isVisibleInFocus(nodeId) {
+    if (!this.focusedId) return true;
+    if (nodeId === this.focusedId || this.isDescendant(nodeId, this.focusedId)) return true;
+    return this.isDescendant(this.focusedId, nodeId);
+  }
+
+  focusBranch(nodeId) {
+    const node = this.getNode(nodeId);
+    if (!node?.parentId) return;
+    this.rememberViewport();
+    this.focusedId = nodeId;
+    this.map.selectedId = nodeId;
+    this.render();
+  }
+
+  clearBranchFocus() {
+    if (!this.focusedId) return;
+    this.rememberViewport();
+    this.focusedId = null;
+    this.render();
   }
 
   revealNode(nodeId) {
@@ -988,6 +1696,201 @@ class DecisionMapView extends TextFileView {
     this.map.scrollTop = nextTop;
   }
 
+  fitDecision() {
+    const scroller = this.currentScroller;
+    const canvas = this.currentCanvas;
+    if (!scroller || !canvas || !this.nodePositions?.size) return;
+    const positions = [...this.nodePositions.entries()]
+      .filter(([id]) => this.isVisibleInFocus(id))
+      .map(([, position]) => position);
+    if (!positions.length) return;
+    const minX = Math.min(...positions.map((position) => position.x));
+    const maxX = Math.max(...positions.map((position) => position.x + CARD_WIDTH));
+    const minY = Math.min(...positions.map((position) => position.y));
+    const maxY = Math.max(...positions.map((position) => position.y + CARD_HEIGHT + SCORE_FOOTER_HEIGHT));
+    const width = Math.max(1, maxX - minX);
+    const height = Math.max(1, maxY - minY);
+    const padding = 110;
+    const zoom = Math.max(MIN_ZOOM, Math.min(1, (scroller.clientWidth - padding) / width, (scroller.clientHeight - padding) / height));
+    this.map.zoom = zoom;
+    canvas.style.zoom = String(zoom);
+    scroller.scrollLeft = Math.max(0, ((minX + maxX) / 2) * zoom - scroller.clientWidth / 2);
+    scroller.scrollTop = Math.max(0, ((minY + maxY) / 2) * zoom - scroller.clientHeight / 2);
+    this.map.scrollLeft = scroller.scrollLeft;
+    this.map.scrollTop = scroller.scrollTop;
+    this.updateToolbar();
+    this.saveMap();
+  }
+
+  findNodeMatches(query) {
+    const normalized = String(query || "").trim().toLocaleLowerCase();
+    if (!normalized) return [];
+    return this.map.nodes
+      .filter((node) => node.text.toLocaleLowerCase().includes(normalized))
+      .map((node) => node.id);
+  }
+
+  showNodeSearch() {
+    if (this.searchPanelEl?.isConnected) {
+      this.searchInputEl?.focus();
+      this.searchInputEl?.select();
+      return;
+    }
+    const panel = this.containerEl.createDiv({ cls: "kdh-search-panel", attr: { role: "dialog", "aria-label": "Search nodes" } });
+    const header = panel.createDiv({ cls: "kdh-search-header" });
+    header.createEl("strong", { text: "Search nodes" });
+    const close = header.createEl("button", { text: "×", attr: { type: "button", "aria-label": "Close search" } });
+    const body = panel.createDiv({ cls: "kdh-search-body" });
+    const input = body.createEl("input", { attr: { type: "search", placeholder: "Find node title…", "aria-label": "Search node titles" } });
+    const controls = body.createDiv({ cls: "kdh-search-controls" });
+    const status = controls.createSpan({ cls: "kdh-search-status", text: "Type to search" });
+    const previous = controls.createEl("button", { text: "‹", attr: { type: "button", "aria-label": "Previous match" } });
+    const next = controls.createEl("button", { text: "›", attr: { type: "button", "aria-label": "Next match" } });
+    this.searchPanelEl = panel;
+    this.searchInputEl = input;
+    this.searchStatusEl = status;
+    this.searchPreviousButton = previous;
+    this.searchNextButton = next;
+    this.searchMatches = [];
+    this.searchIndex = -1;
+    this.syncSearchPanelBackground();
+
+    const updateQuery = () => {
+      this.searchMatches = this.findNodeMatches(input.value);
+      this.searchIndex = this.searchMatches.length ? 0 : -1;
+      this.updateSearchPanelStatus();
+      if (this.searchIndex >= 0) this.revealSearchMatch(this.searchMatches[this.searchIndex]);
+    };
+    input.addEventListener("input", updateQuery);
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        this.moveSearchMatch(event.shiftKey ? -1 : 1);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        this.closeNodeSearch();
+      }
+    });
+    previous.addEventListener("click", () => this.moveSearchMatch(-1));
+    next.addEventListener("click", () => this.moveSearchMatch(1));
+    close.addEventListener("click", () => this.closeNodeSearch());
+    this.installSearchPanelDragging(header, close);
+    this.updateSearchPanelStatus();
+    setTimeout(() => input.focus(), 0);
+  }
+
+  closeNodeSearch(restoreFocus = true) {
+    this.searchDragCleanup?.();
+    this.searchDragCleanup = null;
+    this.searchPanelEl?.remove();
+    this.searchPanelEl = null;
+    this.searchInputEl = null;
+    this.searchStatusEl = null;
+    this.searchPreviousButton = null;
+    this.searchNextButton = null;
+    this.searchMatches = [];
+    this.searchIndex = -1;
+    if (restoreFocus) this.containerEl.focus();
+  }
+
+  syncSearchPanelBackground() {
+    if (!this.searchPanelEl) return;
+    this.searchPanelEl.removeClass("kdh-background-paper");
+    this.searchPanelEl.removeClass("kdh-background-dark");
+    const background = normalizeBackground(this.map.background);
+    if (background === "paper" || background === "dark") this.searchPanelEl.addClass(`kdh-background-${background}`);
+  }
+
+  updateSearchPanelStatus() {
+    const count = this.searchMatches.length;
+    if (this.searchStatusEl) this.searchStatusEl.setText(count ? `${this.searchIndex + 1} of ${count}` : (this.searchInputEl?.value.trim() ? "No matches" : "Type to search"));
+    if (this.searchPreviousButton) this.searchPreviousButton.disabled = count < 2;
+    if (this.searchNextButton) this.searchNextButton.disabled = count < 2;
+  }
+
+  moveSearchMatch(direction) {
+    if (!this.searchMatches.length) return;
+    this.searchIndex = (this.searchIndex + direction + this.searchMatches.length) % this.searchMatches.length;
+    this.updateSearchPanelStatus();
+    this.revealSearchMatch(this.searchMatches[this.searchIndex]);
+  }
+
+  async revealSearchMatch(nodeId) {
+    const node = this.getNode(nodeId);
+    if (!node) return;
+    let changed = false;
+    let ancestor = node.parentId ? this.getNode(node.parentId) : null;
+    while (ancestor) {
+      if (ancestor.collapsed) {
+        if (!changed) this.recordHistory();
+        ancestor.collapsed = false;
+        changed = true;
+      }
+      ancestor = ancestor.parentId ? this.getNode(ancestor.parentId) : null;
+    }
+    if (this.focusedId && !this.isVisibleInFocus(nodeId)) this.focusedId = null;
+    this.map.selectedId = nodeId;
+    await this.saveMap();
+    this.render();
+    requestAnimationFrame(() => {
+      this.revealNode(nodeId);
+      this.keepSearchMatchClearOfPanel(nodeId);
+      this.searchInputEl?.focus();
+    });
+  }
+
+  keepSearchMatchClearOfPanel(nodeId) {
+    const panel = this.searchPanelEl;
+    const card = this.currentCanvas?.querySelector(`.kdh-node[data-node-id="${CSS.escape(nodeId)}"]`);
+    const scroller = this.currentScroller;
+    if (!panel?.isConnected || !card || !scroller) return;
+    const panelRect = panel.getBoundingClientRect();
+    const cardRect = card.getBoundingClientRect();
+    const gap = 16;
+    if (cardRect.right + gap <= panelRect.left || cardRect.left - gap >= panelRect.right || cardRect.bottom + gap <= panelRect.top || cardRect.top - gap >= panelRect.bottom) return;
+    const shifts = [
+      { x: cardRect.right - panelRect.left + gap, y: 0 },
+      { x: cardRect.left - panelRect.right - gap, y: 0 },
+      { x: 0, y: cardRect.bottom - panelRect.top + gap },
+      { x: 0, y: cardRect.top - panelRect.bottom - gap },
+    ].sort((a, b) => Math.hypot(a.x, a.y) - Math.hypot(b.x, b.y));
+    scroller.scrollLeft += shifts[0].x;
+    scroller.scrollTop += shifts[0].y;
+    this.map.scrollLeft = scroller.scrollLeft;
+    this.map.scrollTop = scroller.scrollTop;
+  }
+
+  installSearchPanelDragging(handle, closeButton) {
+    let drag = null;
+    const move = (event) => {
+      if (!drag || !this.searchPanelEl) return;
+      const maxLeft = Math.max(6, this.containerEl.clientWidth - this.searchPanelEl.offsetWidth - 6);
+      const maxTop = Math.max(48, this.containerEl.clientHeight - this.searchPanelEl.offsetHeight - 6);
+      this.searchPanelEl.style.left = `${Math.min(maxLeft, Math.max(6, drag.left + event.clientX - drag.x))}px`;
+      this.searchPanelEl.style.top = `${Math.min(maxTop, Math.max(48, drag.top + event.clientY - drag.y))}px`;
+    };
+    const up = () => {
+      drag = null;
+      this.searchPanelEl?.removeClass("is-dragging");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    const down = (event) => {
+      if (event.button !== 0 || event.target === closeButton || !this.searchPanelEl) return;
+      drag = { x: event.clientX, y: event.clientY, left: parseFloat(this.searchPanelEl.style.left) || 14, top: parseFloat(this.searchPanelEl.style.top) || 50 };
+      this.searchPanelEl.addClass("is-dragging");
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      event.preventDefault();
+    };
+    handle.addEventListener("pointerdown", down);
+    this.searchDragCleanup = () => {
+      handle.removeEventListener("pointerdown", down);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  }
+
   navigateSelection(key) {
     if (!this.nodePositions?.size) return;
     let selected = this.getNode(this.map.selectedId);
@@ -996,9 +1899,31 @@ class DecisionMapView extends TextFileView {
       if (selected) this.selectNode(selected, true);
       return;
     }
+    if ((this.map.layout || "").startsWith("staggered-")) {
+      const axis = {
+        ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 },
+        ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 },
+      }[key];
+      const current = this.nodePositions.get(selected.id);
+      if (!axis || !current) return;
+      const center = { x: current.x + CARD_WIDTH / 2, y: current.y + CARD_HEIGHT / 2 };
+      let best = null;
+      for (const [nodeId, position] of this.nodePositions) {
+        if (nodeId === selected.id || !this.isVisibleInFocus(nodeId)) continue;
+        const dx = position.x + CARD_WIDTH / 2 - center.x;
+        const dy = position.y + CARD_HEIGHT / 2 - center.y;
+        const forward = dx * axis.x + dy * axis.y;
+        if (forward <= 1) continue;
+        const sideways = Math.abs(dx * axis.y - dy * axis.x);
+        const score = Math.hypot(dx, dy) + sideways * 2;
+        if (!best || score < best.score) best = { node: this.getNode(nodeId), score };
+      }
+      if (best?.node) this.selectNode(best.node, true);
+      return;
+    }
     const parent = this.getNode(selected.parentId);
-    const children = this.visibleChildren(selected);
-    const siblings = parent ? this.visibleChildren(parent) : [selected];
+    const children = this.visibleChildren(selected).filter((node) => this.isVisibleInFocus(node.id));
+    const siblings = parent ? this.visibleChildren(parent).filter((node) => this.isVisibleInFocus(node.id)) : [selected];
     const index = siblings.findIndex((node) => node.id === selected.id);
     const previous = index > 0 ? siblings[index - 1] : null;
     const next = index >= 0 && index < siblings.length - 1 ? siblings[index + 1] : null;
@@ -1007,6 +1932,14 @@ class DecisionMapView extends TextFileView {
       up: { ArrowDown: parent, ArrowUp: children[0], ArrowLeft: previous, ArrowRight: next },
       right: { ArrowLeft: parent, ArrowRight: children[0], ArrowUp: previous, ArrowDown: next },
       left: { ArrowRight: parent, ArrowLeft: children[0], ArrowUp: previous, ArrowDown: next },
+      "linear-up-right": { ArrowLeft: parent, ArrowRight: children[0], ArrowUp: previous, ArrowDown: next },
+      "linear-down-right": { ArrowLeft: parent, ArrowRight: children[0], ArrowUp: previous, ArrowDown: next },
+      "linear-up-left": { ArrowRight: parent, ArrowLeft: children[0], ArrowUp: previous, ArrowDown: next },
+      "linear-down-left": { ArrowRight: parent, ArrowLeft: children[0], ArrowUp: previous, ArrowDown: next },
+      "linear-left-up": { ArrowDown: parent, ArrowUp: children[0], ArrowRight: previous, ArrowLeft: next },
+      "linear-left-down": { ArrowUp: parent, ArrowDown: children[0], ArrowRight: previous, ArrowLeft: next },
+      "linear-right-up": { ArrowDown: parent, ArrowUp: children[0], ArrowLeft: previous, ArrowRight: next },
+      "linear-right-down": { ArrowUp: parent, ArrowDown: children[0], ArrowLeft: previous, ArrowRight: next },
     };
     const target = (actions[this.map.layout || "down"] || actions.down)[key];
     if (target) this.selectNode(target, true);
@@ -1048,6 +1981,13 @@ class DecisionMapView extends TextFileView {
 
   importantWarning(options, leader, needsMoreInfo) {
     if (leader.totals.disqualifyingRisk) return `Every current path is blocked by a deal-breaker. ${leader.totals.disqualifyingRisk.text}`;
+    const incompletePaths = options.flatMap((entry) => (entry.totals.incompletePaths || [])
+      .map((path) => `${entry.node.text} → ${path.text}`));
+    if (incompletePaths.length) {
+      const shown = incompletePaths.slice(0, 3).map((path) => `“${path}”`).join(", ");
+      const remaining = incompletePaths.length > 3 ? ` and ${incompletePaths.length - 3} more` : "";
+      return `All Paths incomplete: evaluate ${shown}${remaining}. Required paths without rated factors are excluded from the score.`;
+    }
     if (needsMoreInfo) return "No option has enough information to calculate a score.";
     if (options.some((entry) => entry.totals.score === null)) return "Some options are not evaluated and were excluded from the comparison.";
     if (this.map.showWarnings === false) return null;
@@ -1095,6 +2035,19 @@ class DecisionMapView extends TextFileView {
     return null;
   }
 
+  factorHasEvidence(node) {
+    return Boolean(node?.notes?.trim());
+  }
+
+  renderFactorEvidence(content, node) {
+    if (!this.factorHasEvidence(node)) return;
+    const evidence = content.createDiv({ cls: "kdh-factor-evidence" });
+    evidence.createDiv({ cls: "kdh-summary-label", text: "Supporting evidence" });
+    if (node.notes?.trim()) {
+      evidence.createDiv({ cls: "kdh-evidence-notes", text: node.notes.trim() });
+    }
+  }
+
   renderSelectedNodeSummary(content, node) {
     content.createDiv({ cls: "kdh-summary-label", text: `Selected ${NODE_TYPES[node.type]?.label || "node"}` });
     content.createDiv({ cls: `kdh-summary-selected-title is-${node.type}`, text: node.text });
@@ -1111,12 +2064,14 @@ class DecisionMapView extends TextFileView {
     const score = this.scoreForNode(node);
     if (score === null) {
       content.createDiv({ cls: "kdh-summary-unrated", text: "Set both likelihood and impact to calculate this node." });
+      this.renderFactorEvidence(content, node);
       return;
     }
     const scoreRow = content.createDiv({ cls: `kdh-selected-factor-score is-${node.type}` });
     scoreRow.createSpan({ text: `${node.type === "benefit" ? "+" : "−"}${score}` });
     scoreRow.createSpan({ cls: "kdh-selected-factor-formula", text: `Likelihood ${node.likelihood} × impact ${node.impact}` });
     if (node.type === "risk" && node.isConstraint) content.createDiv({ cls: "kdh-summary-constraint", text: "This risk is a deal-breaker." });
+    this.renderFactorEvidence(content, node);
   }
 
   addSummaryMetrics(content, totals) {
@@ -1126,7 +2081,10 @@ class DecisionMapView extends TextFileView {
     const completeness = totalFactors ? Math.round((ratedForConfidence / totalFactors) * 100) : 0;
     const grid = content.createDiv({ cls: "kdh-summary-grid" });
     grid.createDiv({ cls: "is-benefit", text: totals.benefitPercent === null ? "Balance: unrated" : `${totals.benefitPercent}% benefit` });
-    grid.createDiv({ cls: `is-net${totals.score < 0 ? " is-negative" : ""}`, text: `Score ${totals.score >= 0 ? "+" : ""}${totals.score}` });
+    grid.createDiv({
+      cls: `is-net${totals.score < 0 ? " is-negative" : ""}${totals.score === null ? " is-incomplete" : ""}`,
+      text: totals.score === null ? "Not evaluated" : `Score ${totals.score >= 0 ? "+" : ""}${totals.score}`,
+    });
     grid.createDiv({ cls: `is-complete${completeness < 100 ? " is-incomplete" : ""}`, text: `${ratedForConfidence}/${totalFactors} rated` });
     if (totals.highestRisk) {
       const risk = content.createDiv({ cls: "kdh-summary-risk" });
@@ -1135,6 +2093,12 @@ class DecisionMapView extends TextFileView {
     }
     if (totals.disqualifyingRisk) content.createDiv({ cls: "kdh-summary-constraint", text: `Deal-breaker: ${totals.disqualifyingRisk.text}` });
     if (unratedForConfidence) content.createDiv({ cls: "kdh-summary-unrated", text: `${unratedForConfidence} factor${unratedForConfidence === 1 ? "" : "s"} still unrated` });
+    if (totals.incompletePaths?.length) {
+      content.createDiv({
+        cls: "kdh-summary-unrated",
+        text: `${totals.incompletePaths.length} required All Paths sub-option${totals.incompletePaths.length === 1 ? " is" : "s are"} still unevaluated: ${totals.incompletePaths.map((path) => path.text).join(", ")}`,
+      });
+    }
     if (totals.chosenOption) content.createDiv({ cls: "kdh-summary-path", text: `Best path: ${totals.chosenOption.text}` });
     if (totals.combinedOptions?.length) content.createDiv({ cls: "kdh-summary-path", text: `Combined: ${totals.combinedOptions.map((item) => item.text).join(", ")}` });
   }
@@ -1143,7 +2107,7 @@ class DecisionMapView extends TextFileView {
     const scroller = this.currentScroller;
     if (!scroller || !this.currentCanvas) return;
     const oldZoom = this.map.zoom || 1;
-    const nextZoom = Math.max(0.2, Math.min(2, oldZoom * multiplier));
+    const nextZoom = Math.max(MIN_ZOOM, Math.min(2, oldZoom * multiplier));
     this.setZoomAt(nextZoom, scroller.clientWidth / 2, scroller.clientHeight / 2);
   }
 
@@ -1152,7 +2116,7 @@ class DecisionMapView extends TextFileView {
     const canvas = this.currentCanvas;
     if (!scroller || !canvas) return;
     const oldZoom = this.map.zoom || 1;
-    nextZoom = Math.max(0.2, Math.min(2, nextZoom));
+    nextZoom = Math.max(MIN_ZOOM, Math.min(2, nextZoom));
     if (Math.abs(nextZoom - oldZoom) < 0.001) return;
     const contentX = (scroller.scrollLeft + focusX) / oldZoom;
     const contentY = (scroller.scrollTop + focusY) / oldZoom;
@@ -1170,23 +2134,17 @@ class DecisionMapView extends TextFileView {
   promptForDecision() {
     if (this.promptOpen || this.map.rootId) return;
     this.promptOpen = true;
-    const modal = new NodeEditorModal(this.app, {
-      heading: "Enter the decision",
-      type: "decision",
-      isRoot: true,
-      onSave: async ({ text }) => {
-        const root = this.makeNode({ text, type: "decision", parentId: null, relationship: "" });
-        this.map = { ...newMapWithDefaults(this.plugin.settings), rootId: root.id, selectedId: root.id, nodes: [root] };
+    const modal = new CreateDecisionModal(this.app, this.plugin.settings, async (text, templateId) => {
+        this.map = createDecisionMapFromTemplate(this.plugin.settings, text, templateId);
         await this.saveMap();
         this.render();
-      },
     });
     const originalClose = modal.onClose.bind(modal);
     modal.onClose = () => { originalClose(); this.promptOpen = false; };
     modal.open();
   }
 
-  makeNode({ text, type, parentId, relationship, likelihood = 1, impact = 1, isConstraint = false, subOptionMode = "alternative" }) {
+  makeNode({ text, type, parentId, relationship, likelihood = 1, impact = 1, isConstraint = false, subOptionMode = "alternative", notes = "" }) {
     return {
       id: `node-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       text,
@@ -1197,15 +2155,51 @@ class DecisionMapView extends TextFileView {
       impact,
       isConstraint,
       subOptionMode,
+      notes,
+      collapsed: false,
+      locked: false,
       childIds: [],
     };
   }
 
   getNode(id) { return this.map.nodes.find((node) => node.id === id); }
 
+  lockingNodeId(nodeId) {
+    let current = this.getNode(nodeId);
+    const visited = new Set();
+    while (current && !visited.has(current.id)) {
+      if (current.locked) return current.id;
+      visited.add(current.id);
+      current = this.getNode(current.parentId);
+    }
+    return null;
+  }
+
+  ensureEditable(nodeId) {
+    if (!this.lockingNodeId(nodeId)) return true;
+    new Notice("This branch is locked. Unlock it from the node menu before editing it.");
+    return false;
+  }
+
+  async toggleBranchLock(node) {
+    const lockingId = this.lockingNodeId(node.id);
+    this.rememberViewport();
+    this.recordHistory();
+    if (lockingId) this.getNode(lockingId).locked = false;
+    else node.locked = true;
+    await this.saveMap();
+    this.render();
+    new Notice(lockingId ? "Branch unlocked." : "Branch locked against edits.");
+  }
+
   rememberViewport() {
     this.map.scrollLeft = this.currentScroller?.scrollLeft ?? this.map.scrollLeft;
     this.map.scrollTop = this.currentScroller?.scrollTop ?? this.map.scrollTop;
+  }
+
+  clearLongPressHandlers() {
+    this.longPressCancellers.forEach((cancel) => cancel());
+    this.longPressCancellers.clear();
   }
 
   installLongPress(element, action) {
@@ -1241,6 +2235,7 @@ class DecisionMapView extends TextFileView {
 
   canAttach(node, parent) {
     if (!node || !parent || !node.parentId || node.id === parent.id) return false;
+    if (this.lockingNodeId(node.id) || this.lockingNodeId(parent.id)) return false;
     if (!this.canAcceptType(node.type, parent)) return false;
     if (node.type === "option" && this.branchContains(node, parent.id)) return false;
     return true;
@@ -1253,6 +2248,7 @@ class DecisionMapView extends TextFileView {
   }
 
   async moveBranch(node, newParent) {
+    if (!this.ensureEditable(node.id) || !this.ensureEditable(newParent.id)) return;
     if (!this.canAttach(node, newParent)) {
       new Notice("That node type cannot be placed there.");
       return;
@@ -1263,6 +2259,8 @@ class DecisionMapView extends TextFileView {
     const oldParent = this.getNode(node.parentId);
     if (oldParent) oldParent.childIds = oldParent.childIds.filter((id) => id !== node.id);
     newParent.childIds.push(node.id);
+    if (oldParent && !oldParent.childIds.length) oldParent.collapsed = false;
+    newParent.collapsed = false;
     node.parentId = newParent.id;
     await this.saveMap();
     this.render();
@@ -1287,6 +2285,7 @@ class DecisionMapView extends TextFileView {
   }
 
   async pasteBranch(parent) {
+    if (!this.ensureEditable(parent.id)) return;
     const clipboard = this.plugin.branchClipboard;
     const sourceRoot = this.clipboardRoot();
     if (!clipboard || !sourceRoot) return;
@@ -1309,12 +2308,14 @@ class DecisionMapView extends TextFileView {
     const pastedRoot = clones.find((node) => node.id === idMap.get(clipboard.rootId));
     this.map.nodes.push(...clones);
     parent.childIds.push(pastedRoot.id);
+    parent.collapsed = false;
     this.map.selectedId = pastedRoot.id;
     await this.saveMap();
     this.render();
   }
 
   addChild(parent, suggestedType = null) {
+    if (!this.ensureEditable(parent.id)) return;
     if (parent.type !== "decision" && parent.type !== "option") {
       new Notice("Benefits and risks are final scoring factors and cannot have children.");
       return;
@@ -1331,6 +2332,7 @@ class DecisionMapView extends TextFileView {
         const child = this.makeNode({ ...data, parentId: parent.id });
         this.map.nodes.push(child);
         parent.childIds.push(child.id);
+        parent.collapsed = false;
         await this.saveMap();
         this.render();
       },
@@ -1338,6 +2340,7 @@ class DecisionMapView extends TextFileView {
   }
 
   editNode(node) {
+    if (!this.ensureEditable(node.id)) return;
     const parent = this.getNode(node.parentId);
     const allowedTypes = !node.parentId
       ? ["decision"]
@@ -1351,6 +2354,7 @@ class DecisionMapView extends TextFileView {
       impact: node.impact,
       isConstraint: node.isConstraint,
       subOptionMode: node.subOptionMode,
+      notes: node.notes,
       hasSubOptions: node.childIds.some((id) => this.getNode(id)?.type === "option"),
       isRoot: !node.parentId,
       allowedTypes,
@@ -1365,12 +2369,164 @@ class DecisionMapView extends TextFileView {
   }
 
   editRelationship(node) {
+    if (!this.ensureEditable(node.id)) return;
     new RelationshipModal(this.app, node.relationship, async (value) => {
       this.recordHistory();
       node.relationship = value;
       await this.saveMap();
       this.render();
     }).open();
+  }
+
+  async toggleBranch(node) {
+    if (!node?.childIds?.length) return;
+    const zoom = this.map.zoom || 1;
+    const beforePosition = this.nodePositions?.get(node.id) || this.calculateLayout().positions.get(node.id);
+    const beforeScrollLeft = this.currentScroller?.scrollLeft ?? this.map.scrollLeft ?? 0;
+    const beforeScrollTop = this.currentScroller?.scrollTop ?? this.map.scrollTop ?? 0;
+    const anchorX = beforePosition ? beforePosition.x * zoom - beforeScrollLeft : null;
+    const anchorY = beforePosition ? beforePosition.y * zoom - beforeScrollTop : null;
+    this.map.scrollLeft = beforeScrollLeft;
+    this.map.scrollTop = beforeScrollTop;
+    this.recordHistory();
+    if (!node.collapsed && this.focusedId && this.focusedId !== node.id && this.isDescendant(this.focusedId, node.id)) {
+      this.focusedId = null;
+    }
+    node.collapsed = !node.collapsed;
+    this.map.selectedId = node.id;
+    if (anchorX !== null && anchorY !== null) {
+      const afterPosition = this.calculateLayout().positions.get(node.id);
+      if (afterPosition) {
+        this.map.scrollLeft = Math.max(0, afterPosition.x * zoom - anchorX);
+        this.map.scrollTop = Math.max(0, afterPosition.y * zoom - anchorY);
+      }
+    }
+    await this.saveMap();
+    this.render();
+  }
+
+  nodeDepth(nodeId) {
+    let depth = 0;
+    let current = this.getNode(nodeId);
+    const visited = new Set();
+    while (current?.parentId && !visited.has(current.id)) {
+      visited.add(current.id);
+      current = this.getNode(current.parentId);
+      depth += 1;
+    }
+    return depth;
+  }
+
+  mapMaximumDepth() {
+    return this.map.nodes.reduce((maximum, node) => Math.max(maximum, this.nodeDepth(node.id)), 0);
+  }
+
+  mapCollapseWouldChange(mode, visibleLevel = 1) {
+    return this.map.nodes.some((node) => {
+      if (!node.childIds.length) return false;
+      const shouldCollapse = mode === "collapse-all" || (mode === "collapse-level" && this.nodeDepth(node.id) >= visibleLevel);
+      return Boolean(node.collapsed) !== shouldCollapse;
+    });
+  }
+
+  branchExpansionWouldChange(node) {
+    if (!node) return false;
+    if (node.childIds.length && node.collapsed) return true;
+    return node.childIds.some((id) => this.branchExpansionWouldChange(this.getNode(id)));
+  }
+
+  levelChooserWouldChangeMap() {
+    const maximumLevel = this.mapMaximumDepth();
+    for (let level = 1; level <= maximumLevel; level += 1) {
+      if (this.mapCollapseWouldChange("collapse-level", level)) return true;
+    }
+    return false;
+  }
+
+  async expandEntireBranch(node) {
+    const zoom = this.map.zoom || 1;
+    const beforePosition = this.nodePositions?.get(node.id) || this.calculateLayout().positions.get(node.id);
+    const beforeScrollLeft = this.currentScroller?.scrollLeft ?? this.map.scrollLeft ?? 0;
+    const beforeScrollTop = this.currentScroller?.scrollTop ?? this.map.scrollTop ?? 0;
+    const anchorX = beforePosition ? beforePosition.x * zoom - beforeScrollLeft : null;
+    const anchorY = beforePosition ? beforePosition.y * zoom - beforeScrollTop : null;
+    const visit = (current) => {
+      if (!current) return;
+      current.collapsed = false;
+      current.childIds.forEach((id) => visit(this.getNode(id)));
+    };
+    this.map.scrollLeft = beforeScrollLeft;
+    this.map.scrollTop = beforeScrollTop;
+    this.recordHistory();
+    visit(node);
+    if (anchorX !== null && anchorY !== null) {
+      const afterPosition = this.calculateLayout().positions.get(node.id);
+      if (afterPosition) {
+        this.map.scrollLeft = Math.max(0, afterPosition.x * zoom - anchorX);
+        this.map.scrollTop = Math.max(0, afterPosition.y * zoom - anchorY);
+      }
+    }
+    await this.saveMap();
+    this.render();
+  }
+
+  async setMapCollapse(mode, visibleLevel = 1) {
+    this.rememberViewport();
+    this.recordHistory();
+    for (const node of this.map.nodes) {
+      if (!node.childIds.length) continue;
+      node.collapsed = mode === "collapse-all" || (mode === "collapse-level" && this.nodeDepth(node.id) >= visibleLevel);
+    }
+    this.focusedId = null;
+    await this.saveMap();
+    this.render();
+    requestAnimationFrame(() => this.fitDecision());
+  }
+
+  showCollapseToLevel() {
+    const maximumLevel = this.mapMaximumDepth();
+    if (maximumLevel < 1) return;
+    new CollapseToLevelModal(this.app, maximumLevel, 1, (level) => this.mapCollapseWouldChange("collapse-level", level), (level) => {
+      this.setMapCollapse("collapse-level", level);
+    }).open();
+  }
+
+  addCollapseMenu(menu, node = null) {
+    menu.addItem((item) => {
+      item.setTitle("Collapse and expand").setIcon("list-tree");
+      const submenu = item.setSubmenu();
+      if (node?.childIds.length) {
+        submenu.addItem((subitem) => subitem
+          .setTitle(node.collapsed ? "Expand children" : "Collapse children")
+          .setIcon(node.collapsed ? "chevrons-right" : "chevrons-down")
+          .onClick(() => this.toggleBranch(node)));
+        submenu.addItem((subitem) => subitem
+          .setTitle("Expand entire branch")
+          .setIcon("unfold-vertical")
+          .setDisabled(!this.branchExpansionWouldChange(node))
+          .onClick(() => this.expandEntireBranch(node)));
+        submenu.addSeparator();
+      }
+      if (node) {
+        submenu.addItem((subitem) => subitem
+          .setTitle("Collapse map to selected level")
+          .setDisabled(!this.mapCollapseWouldChange("collapse-level", this.nodeDepth(node.id)))
+          .onClick(() => this.setMapCollapse("collapse-level", this.nodeDepth(node.id))));
+      } else {
+        submenu.addItem((subitem) => subitem
+          .setTitle("Collapse to level…")
+          .setDisabled(!this.levelChooserWouldChangeMap())
+          .onClick(() => this.showCollapseToLevel()));
+      }
+      submenu.addItem((subitem) => subitem
+        .setTitle("Collapse entire map")
+        .setDisabled(!this.mapCollapseWouldChange("collapse-all"))
+        .onClick(() => this.setMapCollapse("collapse-all")));
+      submenu.addItem((subitem) => subitem
+        .setTitle("Expand entire map")
+        .setDisabled(!this.mapCollapseWouldChange("expand-all"))
+        .onClick(() => this.setMapCollapse("expand-all")));
+    });
   }
 
   showNodeMenu(event, node) {
@@ -1387,7 +2543,19 @@ class DecisionMapView extends TextFileView {
     if (node.type === "decision" || node.type === "option") {
       menu.addItem((item) => item.setTitle("Add connected item").setIcon("plus").onClick(() => this.addChild(node)));
     }
+    this.addCollapseMenu(menu, node);
+    const lockingId = this.lockingNodeId(node.id);
+    menu.addItem((item) => item
+      .setTitle(lockingId ? "Unlock branch" : "Lock branch")
+      .setIcon(lockingId ? "lock-open" : "lock")
+      .onClick(() => this.toggleBranchLock(node)));
     menu.addItem((item) => item.setTitle("Edit node").setIcon("pencil").onClick(() => this.editNode(node)));
+    if (node.parentId) {
+      menu.addItem((item) => item
+        .setTitle(this.focusedId === node.id ? "Unfocus branch" : "Focus branch")
+        .setIcon(this.focusedId === node.id ? "scan-line" : "scan")
+        .onClick(() => this.focusedId === node.id ? this.clearBranchFocus() : this.focusBranch(node.id)));
+    }
     if (node.parentId) {
       menu.addSeparator();
       menu.addItem((item) => item.setTitle("Copy branch").setIcon("copy").onClick(() => this.copyBranch(node)));
@@ -1416,6 +2584,7 @@ class DecisionMapView extends TextFileView {
   }
 
   async deleteBranch(node) {
+    if (!this.ensureEditable(node.id)) return;
     if (this.plugin.settings.confirmDelete && !window.confirm(`Delete “${node.text}” and everything beneath it? This can be undone.`)) return;
     this.rememberViewport();
     this.recordHistory();
@@ -1428,14 +2597,17 @@ class DecisionMapView extends TextFileView {
       }
     };
     collect(node);
+    if (this.focusedId && ids.has(this.focusedId)) this.focusedId = null;
     const parent = this.getNode(node.parentId);
     if (parent) parent.childIds = parent.childIds.filter((id) => id !== node.id);
+    if (parent && !parent.childIds.length) parent.collapsed = false;
     this.map.nodes = this.map.nodes.filter((item) => !ids.has(item.id));
     await this.saveMap();
     this.render();
   }
 
   visibleChildren(node) {
+    if (node.collapsed) return [];
     const sideOrder = { benefit: 0, option: 1, risk: 2 };
     return node.childIds
       .map((id) => this.getNode(id))
@@ -1446,6 +2618,11 @@ class DecisionMapView extends TextFileView {
   handleShortcut(event) {
     const target = event.target;
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target instanceof HTMLButtonElement || target.closest?.("[contenteditable=true]")) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      this.showNodeSearch();
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
       event.preventDefault();
       if (event.shiftKey) this.redo();
@@ -1464,18 +2641,21 @@ class DecisionMapView extends TextFileView {
     }
     const selected = this.getNode(this.map.selectedId);
     if (!selected) return;
-    if (event.key === "Enter") {
+    if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      this.addChild(selected);
+    } else if (event.key === "F2") {
       event.preventDefault();
       this.editNode(selected);
-    } else if (event.key === "Tab") {
-      event.preventDefault();
-      if (selected.type === "decision" || selected.type === "option") this.addChild(selected, "option");
     } else if (event.key.toLowerCase() === "d" && selected.type === "option") {
       event.preventDefault();
       this.addChild(selected, "risk");
     } else if (event.key.toLowerCase() === "b" && selected.type === "option") {
       event.preventDefault();
       this.addChild(selected, "benefit");
+    } else if (event.key === " " && selected.childIds.length) {
+      event.preventDefault();
+      this.toggleBranch(selected);
     } else if (event.key === "Delete" && selected.parentId) {
       event.preventDefault();
       this.deleteBranch(selected);
@@ -1528,6 +2708,8 @@ class DecisionMapView extends TextFileView {
     let highestRisk = null;
     let disqualifyingRisk = null;
     const childOptions = [];
+    const incompletePaths = [];
+    const subOptionMode = node.subOptionMode === "combined" ? "combined" : "alternative";
 
     for (const childId of node.childIds) {
       const child = this.getNode(childId);
@@ -1535,6 +2717,7 @@ class DecisionMapView extends TextFileView {
       if (child.type === "option") {
         const childTotals = this.totalsForOption(child, path);
         if (childTotals) childOptions.push({ node: child, totals: childTotals });
+        else if (subOptionMode === "combined") incompletePaths.push({ id: child.id, text: child.text });
         continue;
       }
       if (child.type !== "benefit" && child.type !== "risk") continue;
@@ -1555,12 +2738,14 @@ class DecisionMapView extends TextFileView {
 
     const allRated = rated + childOptions.reduce((sum, entry) => sum + (entry.totals.allRated ?? entry.totals.rated), 0);
     const allUnrated = unrated + childOptions.reduce((sum, entry) => sum + (entry.totals.allUnrated ?? entry.totals.unrated), 0);
-    const subOptionMode = node.subOptionMode === "combined" ? "combined" : "alternative";
     let chosen = null;
     let combinedOptions = null;
 
     if (subOptionMode === "combined") {
-      combinedOptions = childOptions.map((entry) => ({ id: entry.node.id, text: entry.node.text }));
+      combinedOptions = node.childIds
+        .map((id) => this.getNode(id))
+        .filter((child) => child?.type === "option")
+        .map((child) => ({ id: child.id, text: child.text }));
       for (const entry of childOptions) {
         benefits += entry.totals.benefits;
         risks += entry.totals.risks;
@@ -1569,6 +2754,7 @@ class DecisionMapView extends TextFileView {
         factors += entry.totals.rated + entry.totals.unrated;
         if (entry.totals.highestRisk && (!highestRisk || entry.totals.highestRisk.score > highestRisk.score)) highestRisk = entry.totals.highestRisk;
         if (!disqualifyingRisk && entry.totals.disqualifyingRisk) disqualifyingRisk = entry.totals.disqualifyingRisk;
+        incompletePaths.push(...(entry.totals.incompletePaths || []));
       }
     } else {
       for (const entry of childOptions) {
@@ -1591,9 +2777,10 @@ class DecisionMapView extends TextFileView {
         factors += chosen.totals.rated + chosen.totals.unrated;
         if (chosen.totals.highestRisk && (!highestRisk || chosen.totals.highestRisk.score > highestRisk.score)) highestRisk = chosen.totals.highestRisk;
         if (!disqualifyingRisk && chosen.totals.disqualifyingRisk) disqualifyingRisk = chosen.totals.disqualifyingRisk;
+        incompletePaths.push(...(chosen.totals.incompletePaths || []));
       }
     }
-    if (!factors && !allUnrated) return null;
+    if (!factors && !allUnrated && !incompletePaths.length) return null;
     const totalWeight = benefits + risks;
     return {
       benefits,
@@ -1611,6 +2798,7 @@ class DecisionMapView extends TextFileView {
       chosenOption: chosen ? { id: chosen.node.id, text: chosen.node.text } : null,
       combinedOptions,
       subOptionMode,
+      incompletePaths,
     };
   }
 
@@ -1636,39 +2824,45 @@ class DecisionMapView extends TextFileView {
     };
   }
 
+  showLayoutPicker() {
+    new DecisionLayoutPickerModal(this.app, this.map.layout, this.map.background, (layout) => this.applyLayout(layout)).open();
+  }
+
+  async applyLayout(layout) {
+    const normalized = normalizeLayout(layout);
+    if (normalized === this.map.layout) return;
+    this.rememberViewport();
+    this.recordHistory();
+    this.map.layout = normalized;
+    this.map.scrollLeft = null;
+    this.map.scrollTop = null;
+    await this.saveMap();
+    this.render();
+  }
+
   showBackgroundMenu(event) {
     event.preventDefault();
     this.activeMenu?.hide?.();
     const menu = new Menu();
     this.activeMenu = menu;
-    menu.addItem((item) => {
-      item.setTitle("Layout").setIcon("layout-template");
-      const submenu = item.setSubmenu();
-      const layouts = [
-        ["right", "Right-facing"],
-        ["left", "Left-facing"],
-        ["up", "Top-facing"],
-        ["down", "Bottom-facing"],
-      ];
-      for (const [value, label] of layouts) {
-        submenu.addItem((subitem) => subitem
-          .setTitle(`${this.map.layout === value ? "✓ " : ""}${label}`)
-          .onClick(async () => {
-            this.recordHistory();
-            this.map.layout = value;
-            this.map.scrollLeft = null;
-            this.map.scrollTop = null;
-            await this.saveMap();
-            this.render();
-          }));
-      }
-    });
+    menu.addItem((item) => item.setTitle("Fit decision").setIcon("maximize").onClick(() => this.fitDecision()));
+    menu.addItem((item) => item.setTitle("Search nodes").setIcon("search").onClick(() => this.showNodeSearch()));
+    this.addCollapseMenu(menu);
+    menu.addSeparator();
+    if (this.focusedId) {
+      menu.addItem((item) => item.setTitle("Unfocus branch").setIcon("scan-line").onClick(() => this.clearBranchFocus()));
+      menu.addSeparator();
+    }
+    menu.addItem((item) => item
+      .setTitle(`Change layout… (${layoutLabel(this.map.layout)})`)
+      .setIcon("layout-template")
+      .onClick(() => this.showLayoutPicker()));
     menu.addItem((item) => {
       item.setTitle("Background").setIcon("sun-moon");
       const submenu = item.setSubmenu();
-      for (const [value, label] of [["dark", "Dark"], ["light", "Light"]]) {
+      for (const [value, label] of [["system", "Obsidian Default"], ["dark", "Dark"], ["paper", "Paper"]]) {
         submenu.addItem((subitem) => subitem
-          .setTitle(`${(this.map.background || "dark") === value ? "✓ " : ""}${label}`)
+          .setTitle(`${normalizeBackground(this.map.background) === value ? "✓ " : ""}${label}`)
           .onClick(async () => {
             this.map.background = value;
             await this.saveMap();
@@ -1686,6 +2880,7 @@ class DecisionMapView extends TextFileView {
       submenu.addItem((subitem) => subitem.setTitle("SVG image").onClick(() => this.exportSvg()));
       submenu.addItem((subitem) => subitem.setTitle("JPG image").onClick(() => this.exportJpg()));
       submenu.addItem((subitem) => subitem.setTitle("PDF document").onClick(() => this.exportPdf()));
+      submenu.addItem((subitem) => subitem.setTitle("Presentation PDF").onClick(() => this.exportPresentationPdf()));
     });
     menu.addItem((item) => item
       .setTitle("Import JSON backup")
@@ -1704,9 +2899,11 @@ class DecisionMapView extends TextFileView {
     const rated = totals.allRated ?? totals.rated;
     const unrated = totals.allUnrated ?? totals.unrated;
     const lines = [
-      `${pad}- Decision score: ${totals.score >= 0 ? "+" : ""}${totals.score} (range −100 to +100)`,
+      totals.score === null
+        ? `${pad}- Decision score: Not evaluated`
+        : `${pad}- Decision score: ${totals.score >= 0 ? "+" : ""}${totals.score} (range −100 to +100)`,
       `${pad}- Benefits: ${totals.benefits}`,
-      `${pad}- Drawbacks: ${totals.risks}`,
+      `${pad}- Risks: ${totals.risks}`,
       `${pad}- Net raw weight: ${totals.net >= 0 ? "+" : ""}${totals.net}`,
       `${pad}- Benefit share: ${totals.benefitPercent ?? "Not rated"}${totals.benefitPercent === null ? "" : "%"}`,
       `${pad}- Ratings completed: ${rated} of ${rated + unrated}`,
@@ -1716,6 +2913,7 @@ class DecisionMapView extends TextFileView {
     if (totals.disqualifyingRisk) lines.push(`${pad}- Disqualified by deal-breaker: ${this.markdownText(totals.disqualifyingRisk.text)}`);
     if (totals.highestRisk) lines.push(`${pad}- Highest risk: −${totals.highestRisk.score} — ${this.markdownText(totals.highestRisk.text)}`);
     if (unrated) lines.push(`${pad}- Unrated factors: ${unrated}`);
+    if (totals.incompletePaths?.length) lines.push(`${pad}- Unevaluated required paths: ${totals.incompletePaths.map((path) => this.markdownText(path.text)).join(", ")}`);
     return lines;
   }
 
@@ -1754,6 +2952,10 @@ class DecisionMapView extends TextFileView {
         lines.push(`${pad}  - Impact: ${node.impact}`);
         if (node.type === "risk") lines.push(`${pad}  - Deal-breaker: ${node.isConstraint ? "Yes" : "No"}`);
         lines.push(`${pad}  - Factor score: ${factorScore === null ? "Unrated" : `${node.type === "benefit" ? "+" : "−"}${factorScore}`}`);
+        if (node.notes?.trim()) {
+          lines.push(`${pad}  - Supporting notes:`);
+          for (const noteLine of node.notes.trim().split(/\r?\n/)) lines.push(`${pad}    > ${this.markdownText(noteLine)}`);
+        }
       } else if (node.type === "option") {
         lines.push(`${pad}  - Sub-option handling: ${node.subOptionMode === "combined" ? "All Paths" : "Single Path"}`);
         lines.push(...this.optionTotalsMarkdown(this.totalsForOption(node), depth + 1));
@@ -1878,6 +3080,10 @@ class DecisionMapView extends TextFileView {
         throw new Error("A node or connection is invalid");
       }
       if ((node.type === "benefit" || node.type === "risk") && node.childIds.length) throw new Error("A scoring factor cannot contain child nodes");
+      const isFactor = node.type === "benefit" || node.type === "risk";
+      node.notes = isFactor ? String(node.notes || "") : "";
+      delete node.relatedNotes;
+      delete node.sourceUrl;
       if (node.id === parsed.rootId) {
         node.parentId = null;
       } else {
@@ -1902,7 +3108,11 @@ class DecisionMapView extends TextFileView {
     };
     walk(root);
     if (visited.size !== parsed.nodes.length) throw new Error("The imported tree contains disconnected nodes");
-    return { ...emptyMap(), ...parsed, formatVersion: FORMAT_VERSION };
+      for (const node of parsed.nodes) {
+        node.collapsed = Boolean(node.collapsed && node.childIds.length);
+        node.locked = Boolean(node.locked);
+      }
+    return { ...emptyMap(), ...parsed, layout: normalizeLayout(parsed.layout), formatVersion: FORMAT_VERSION };
   }
 
   parseJsonImport(json) {
@@ -2005,7 +3215,7 @@ class DecisionMapView extends TextFileView {
       return score === null ? "Unrated" : `${node.isConstraint ? "DEAL-BREAKER · " : ""}${node.type === "benefit" ? "+" : "−"}${score} · L${node.likelihood} × I${node.impact}`;
     }
     const totals = node.type === "decision" ? this.totalsForDecision() : this.totalsForOption(node);
-    if (!totals) return "Not evaluated";
+    if (!totals || totals.score === null) return "Not evaluated";
     if (totals.disqualified) return "Blocked by deal-breaker";
     if (node.type === "decision") return totals.tiedOptions?.length > 1 ? "Tie" : `Leader: ${totals.chosenOption?.text || "None"} · ${totals.score >= 0 ? "+" : ""}${totals.score}`;
     return `Score ${totals.score >= 0 ? "+" : ""}${totals.score}`;
@@ -2013,7 +3223,7 @@ class DecisionMapView extends TextFileView {
 
   buildSvgExport() {
     const layout = this.calculateLayout();
-    const entries = [...layout.positions.entries()];
+    const entries = [...layout.positions.entries()].filter(([id]) => this.isVisibleInFocus(id));
     if (!entries.length) throw new Error("The decision map is empty");
     const exportCardHeight = 122;
     const margin = 70;
@@ -2024,11 +3234,14 @@ class DecisionMapView extends TextFileView {
     const width = Math.ceil(maxX - minX + margin * 2);
     const height = Math.ceil(maxY - minY + margin * 2);
     const shifted = new Map(entries.map(([id, position]) => [id, { x: position.x - minX + margin, y: position.y - minY + margin }]));
-    const wantsLight = this.map.background === "light" || (this.map.background === "system" && document.body?.classList?.contains("theme-light"));
+    const background = normalizeBackground(this.map.background);
+    const wantsLight = background === "paper" || (background === "system" && document.body?.classList?.contains("theme-light"));
     const palette = wantsLight
-      ? { background: "#f6f7f9", card: "#ffffff", text: "#202124", muted: "#62666d", line: "#73777f", label: "#ffffff", border: "#c9ccd2" }
+      ? { background: "#f7f3e8", card: "#fffdf7", text: "#25231f", muted: "#625e55", line: "#737064", label: "#f7f3e8", border: "#d2c8b2" }
       : { background: "#17181b", card: "#242529", text: "#f0f1f3", muted: "#a9adb5", line: "#b8bbc1", label: "#202125", border: "#43464d" };
-    const accents = { decision: "#7857ff", option: "#3b91c8", benefit: "#58a85d", risk: "#c85c5c" };
+    const accents = { decision: "#d89b32", option: "#3b91c8", benefit: "#58a85d", risk: "#c85c5c" };
+    const dimStrength = Math.min(90, Math.max(0, Number(this.map.dimStrength) || 0));
+    const dimOpacity = (1 - dimStrength / 100).toFixed(2);
     const direction = this.map.layout || "down";
     const horizontal = direction === "left" || direction === "right";
     const parts = [
@@ -2042,17 +3255,10 @@ class DecisionMapView extends TextFileView {
       const parent = shifted.get(node.parentId);
       const child = shifted.get(node.id);
       if (!parent || !child) continue;
-      let x1; let y1; let x2; let y2;
-      if (direction === "up") { x1 = parent.x + CARD_WIDTH / 2; y1 = parent.y; x2 = child.x + CARD_WIDTH / 2; y2 = child.y + CARD_HEIGHT; }
-      else if (direction === "right") { x1 = parent.x + CARD_WIDTH; y1 = parent.y + CARD_HEIGHT / 2; x2 = child.x; y2 = child.y + CARD_HEIGHT / 2; }
-      else if (direction === "left") { x1 = parent.x; y1 = parent.y + CARD_HEIGHT / 2; x2 = child.x + CARD_WIDTH; y2 = child.y + CARD_HEIGHT / 2; }
-      else { x1 = parent.x + CARD_WIDTH / 2; y1 = parent.y + CARD_HEIGHT; x2 = child.x + CARD_WIDTH / 2; y2 = child.y; }
-      const middleX = x1 + (x2 - x1) / 2;
-      const middleY = y1 + (y2 - y1) / 2;
-      const path = horizontal
-        ? `M ${x1} ${y1} C ${middleX} ${y1}, ${middleX} ${y2}, ${x2} ${y2}`
-        : `M ${x1} ${y1} C ${x1} ${middleY}, ${x2} ${middleY}, ${x2} ${y2}`;
-      parts.push(`<path d="${path}"/>`);
+      const geometry = this.edgeGeometry(parent, child, node.id, exportCardHeight);
+      const linearEdge = geometry.linear;
+      const linearStroke = linearEdge ? (accents[node.type] || accents.option) : null;
+      parts.push(`<path d="${geometry.path}"${linearStroke ? ` stroke="${linearStroke}" stroke-width="4" stroke-linejoin="round"` : ""}${this.shouldDimNode(node.id) ? ` opacity="${dimOpacity}"` : ""}/>`);
     }
     parts.push(`</g>`);
     for (const node of this.map.nodes) {
@@ -2061,20 +3267,22 @@ class DecisionMapView extends TextFileView {
       const child = shifted.get(node.id);
       if (!parent || !child) continue;
       const label = node.relationship || DEFAULT_RELATIONSHIPS[node.type] || "Related";
-      const x = (parent.x + child.x) / 2 + CARD_WIDTH / 2;
-      const y = (parent.y + child.y) / 2 + CARD_HEIGHT / 2;
+      const geometry = this.edgeGeometry(parent, child, node.id, exportCardHeight);
+      const x = geometry.labelX;
+      const y = geometry.labelY + 5;
       const labelWidth = Math.min(190, Math.max(58, label.length * 6.5 + 18));
-      parts.push(`<rect x="${x - labelWidth / 2}" y="${y - 12}" width="${labelWidth}" height="24" rx="12" fill="${palette.label}" stroke="${palette.border}"/>`);
-      parts.push(`<text x="${x}" y="${y + 4}" text-anchor="middle" font-family="sans-serif" font-size="11" fill="${palette.text}">${this.escapeXml(label.length > 26 ? `${label.slice(0, 25)}…` : label)}</text>`);
+      const dimmed = this.shouldDimNode(node.id) ? ` opacity="${dimOpacity}"` : "";
+      parts.push(`<g${dimmed}><rect x="${x - labelWidth / 2}" y="${y - 12}" width="${labelWidth}" height="24" rx="12" fill="${palette.label}" stroke="${palette.border}"/>`);
+      parts.push(`<text x="${x}" y="${y + 4}" text-anchor="middle" font-family="sans-serif" font-size="11" fill="${palette.text}">${this.escapeXml(label.length > 26 ? `${label.slice(0, 25)}…` : label)}</text></g>`);
     }
     for (const node of this.map.nodes) {
       const position = shifted.get(node.id);
       if (!position) continue;
       const accent = accents[node.type] || accents.option;
-      parts.push(`<g><title>${this.escapeXml(node.text)}</title>`);
+      parts.push(`<g${this.shouldDimNode(node.id) ? ` opacity="${dimOpacity}"` : ""}><title>${this.escapeXml(node.text)}</title>`);
       parts.push(`<rect x="${position.x}" y="${position.y}" width="${CARD_WIDTH}" height="${exportCardHeight}" rx="11" fill="${palette.card}" stroke="${node.isConstraint ? accents.risk : palette.border}" stroke-width="${node.type === "decision" ? 3 : 1.5}"/>`);
       parts.push(`<rect x="${position.x}" y="${position.y}" width="6" height="${exportCardHeight}" rx="3" fill="${accent}"/>`);
-      parts.push(`<text x="${position.x + 18}" y="${position.y + 21}" font-family="sans-serif" font-size="10" font-weight="700" letter-spacing="1" fill="${accent}">${this.escapeXml(node.type === "risk" ? "DRAWBACK" : (NODE_TYPES[node.type]?.label || node.type).toUpperCase())}</text>`);
+      parts.push(`<text x="${position.x + 18}" y="${position.y + 21}" font-family="sans-serif" font-size="10" font-weight="700" letter-spacing="1" fill="${accent}">${this.escapeXml((NODE_TYPES[node.type]?.label || node.type).toUpperCase())}</text>`);
       const lines = this.svgTextLines(node.text);
       lines.forEach((line, index) => parts.push(`<text x="${position.x + CARD_WIDTH / 2}" y="${position.y + 48 + index * 17}" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="600" fill="${palette.text}">${this.escapeXml(line)}</text>`));
       parts.push(`<text x="${position.x + CARD_WIDTH / 2}" y="${position.y + 108}" text-anchor="middle" font-family="sans-serif" font-size="10" font-weight="600" fill="${node.type === "risk" ? accents.risk : (node.type === "benefit" ? accents.benefit : palette.muted)}">${this.escapeXml(this.exportNodeScore(node))}</text>`);
@@ -2167,6 +3375,342 @@ class DecisionMapView extends TextFileView {
     return new Blob(parts, { type: "application/pdf" });
   }
 
+  async jpegsToPdf(pages) {
+    if (!pages.length) throw new Error("No presentation pages were created");
+    const encoder = new TextEncoder();
+    const objects = [
+      encoder.encode("<< /Type /Catalog /Pages 2 0 R >>"),
+      null,
+    ];
+    const pageReferences = [];
+    for (let index = 0; index < pages.length; index += 1) {
+      const page = pages[index];
+      const jpeg = new Uint8Array(await page.blob.arrayBuffer());
+      const pageObject = 3 + index * 3;
+      const imageObject = pageObject + 1;
+      const contentObject = pageObject + 2;
+      pageReferences.push(`${pageObject} 0 R`);
+      const pdfWidth = 612;
+      const pdfHeight = 792;
+      const margin = 18;
+      const scale = Math.min((pdfWidth - margin * 2) / page.pixelWidth, (pdfHeight - margin * 2) / page.pixelHeight);
+      const drawWidth = page.pixelWidth * scale;
+      const drawHeight = page.pixelHeight * scale;
+      const drawX = (pdfWidth - drawWidth) / 2;
+      const drawY = (pdfHeight - drawHeight) / 2;
+      const content = `q\n${drawWidth.toFixed(3)} 0 0 ${drawHeight.toFixed(3)} ${drawX.toFixed(3)} ${drawY.toFixed(3)} cm\n/Im0 Do\nQ\n`;
+      objects.push(encoder.encode(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pdfWidth} ${pdfHeight}] /Resources << /XObject << /Im0 ${imageObject} 0 R >> >> /Contents ${contentObject} 0 R >>`));
+      objects.push({ prefix: encoder.encode(`<< /Type /XObject /Subtype /Image /Width ${page.pixelWidth} /Height ${page.pixelHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`), data: jpeg, suffix: encoder.encode("\nendstream") });
+      objects.push(encoder.encode(`<< /Length ${encoder.encode(content).length} >>\nstream\n${content}endstream`));
+    }
+    objects[1] = encoder.encode(`<< /Type /Pages /Kids [${pageReferences.join(" ")}] /Count ${pages.length} >>`);
+    const parts = [encoder.encode("%PDF-1.4\n%KSDH\n")];
+    const offsets = [0];
+    let length = parts[0].length;
+    objects.forEach((object, index) => {
+      offsets.push(length);
+      const prefix = encoder.encode(`${index + 1} 0 obj\n`);
+      const suffix = encoder.encode("\nendobj\n");
+      parts.push(prefix); length += prefix.length;
+      if (object.data) {
+        parts.push(object.prefix, object.data, object.suffix);
+        length += object.prefix.length + object.data.length + object.suffix.length;
+      } else {
+        parts.push(object); length += object.length;
+      }
+      parts.push(suffix); length += suffix.length;
+    });
+    const xrefOffset = length;
+    let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (let index = 1; index <= objects.length; index += 1) xref += `${String(offsets[index]).padStart(10, "0")} 00000 n \n`;
+    xref += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+    parts.push(encoder.encode(xref));
+    return new Blob(parts, { type: "application/pdf" });
+  }
+
+  buildPresentationSvg() {
+    const pageWidth = 816;
+    const pageHeight = 1056;
+    const root = this.getNode(this.map.rootId);
+    if (!root) throw new Error("The decision map is empty");
+    const options = this.rankedTopLevelOptions();
+    const eligible = options.filter((entry) => entry.totals.score !== null && !entry.totals.disqualified);
+    const leader = eligible[0] || options[0] || null;
+    const tied = leader && eligible.filter((entry) => entry.totals.score === leader.totals.score);
+    const needsMoreInfo = !eligible.length;
+    const warning = leader ? this.importantWarning(options, leader, needsMoreInfo) : "Add at least one option to compare possible decisions.";
+    const esc = (value) => this.escapeXml(value);
+    const wrapAll = (value, maximum) => {
+      const words = String(value ?? "").trim().split(/\s+/).filter(Boolean);
+      const wrapped = [];
+      let line = "";
+      for (const word of words) {
+        const pieces = word.length > maximum ? word.match(new RegExp(`.{1,${maximum}}`, "g")) : [word];
+        for (const piece of pieces) {
+          const proposed = line ? `${line} ${piece}` : piece;
+          if (proposed.length <= maximum) line = proposed;
+          else {
+            if (line) wrapped.push(line);
+            line = piece;
+          }
+        }
+      }
+      if (line) wrapped.push(line);
+      return wrapped.length ? wrapped : [""];
+    };
+    const fixedText = (value, x, y, width, options = {}) => {
+      const fontSize = options.fontSize || 14;
+      const lineHeight = options.lineHeight || fontSize * 1.2;
+      const weight = options.weight || 600;
+      const fill = options.fill || "#172033";
+      const maximum = Math.max(4, Math.floor(width / (fontSize * 0.54)));
+      const wrapped = wrapAll(value, maximum);
+      const anchor = options.anchor || "start";
+      return {
+        height: wrapped.length * lineHeight,
+        lines: wrapped.length,
+        svg: wrapped.map((line, index) => `<text x="${x}" y="${(y + fontSize + index * lineHeight).toFixed(2)}" text-anchor="${anchor}" font-family="Arial, sans-serif" font-size="${fontSize}" font-weight="${weight}" fill="${fill}">${esc(line)}</text>`).join(""),
+      };
+    };
+    let resultLabel = "Not evaluated";
+    let resultTitle = "More information needed";
+    let resultDetail = "Add rated benefits and risks before relying on a recommendation.";
+    let resultColor = "#d7a94a";
+    if (leader && !needsMoreInfo) {
+      const isTie = tied.length > 1;
+      resultLabel = isTie ? "Current result · Tie" : "Current recommendation";
+      resultTitle = isTie ? tied.map((entry) => entry.node.text).join(" · ") : leader.node.text;
+      resultDetail = `${this.scoreDescription(leader.totals.score)} · Score ${leader.totals.score >= 0 ? "+" : ""}${leader.totals.score}`;
+      resultColor = leader.totals.score < 0 ? "#c85c5c" : "#58a85d";
+    } else if (leader?.totals.disqualified) {
+      resultLabel = "Current result";
+      resultTitle = "All evaluated paths are blocked";
+      resultDetail = "Review the deal-breaker risks before deciding.";
+      resultColor = "#c85c5c";
+    }
+    const resultFill = resultColor === "#58a85d" ? "#effaf1" : (resultColor === "#c85c5c" ? "#fff1f2" : "#fff8e6");
+    const relevantFactors = this.map.nodes.filter((node) => {
+      if (node.type !== "benefit" && node.type !== "risk") return false;
+      return !leader || this.isDescendant(node.id, leader.node.id);
+    });
+    const strongestBenefits = relevantFactors
+      .filter((node) => node.type === "benefit" && this.scoreForNode(node) !== null)
+      .sort((a, b) => this.scoreForNode(b) - this.scoreForNode(a))
+      .slice(0, 3);
+    const greatestRisks = relevantFactors
+      .filter((node) => node.type === "risk" && this.scoreForNode(node) !== null)
+      .sort((a, b) => this.scoreForNode(b) - this.scoreForNode(a))
+      .slice(0, 3);
+    const strongestInBranch = (option, type) => this.map.nodes
+      .filter((node) => node.type === type && this.isDescendant(node.id, option.id) && this.scoreForNode(node) !== null)
+      .sort((a, b) => this.scoreForNode(b) - this.scoreForNode(a))[0] || null;
+
+    const parts = [
+      `<?xml version="1.0" encoding="UTF-8"?>`,
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${pageWidth}" height="${pageHeight}" viewBox="0 0 ${pageWidth} ${pageHeight}">`,
+      `<rect width="${pageWidth}" height="${pageHeight}" fill="#ffffff"/>`,
+      `<rect x="0" y="0" width="${pageWidth}" height="8" fill="#d89b32"/>`,
+      `<text x="42" y="39" font-family="Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="1.8" fill="#9a681b">DECISION BRIEF</text>`,
+      `<text x="774" y="39" text-anchor="end" font-family="Arial, sans-serif" font-size="9" fill="#64748b">${esc(new Date().toLocaleDateString())}</text>`,
+    ];
+    const title = fixedText(root.text, 42, 54, 732, { fontSize: 26, lineHeight: 30, weight: 700 });
+    parts.push(title.svg);
+    const resultTitleText = fixedText(resultTitle, 62, 0, 620, { fontSize: 19, lineHeight: 22, weight: 700, fill: resultColor });
+    const resultY = 54 + title.height + 12;
+    const resultHeight = 58 + resultTitleText.height;
+    parts.push(`<rect x="42" y="${resultY}" width="732" height="${resultHeight}" rx="10" fill="${resultFill}" stroke="${resultColor}" stroke-opacity="0.45"/>`);
+    parts.push(`<rect x="42" y="${resultY}" width="5" height="${resultHeight}" rx="2.5" fill="${resultColor}"/>`);
+    parts.push(`<text x="62" y="${resultY + 22}" font-family="Arial, sans-serif" font-size="9" font-weight="700" letter-spacing="1.1" fill="#64748b">${esc(resultLabel.toUpperCase())}</text>`);
+    parts.push(fixedText(resultTitle, 62, resultY + 29, 620, { fontSize: 19, lineHeight: 22, weight: 700, fill: resultColor }).svg);
+    parts.push(`<text x="754" y="${resultY + resultHeight - 14}" text-anchor="end" font-family="Arial, sans-serif" font-size="9" font-weight="700" fill="#64748b">${esc(resultDetail)}</text>`);
+
+    let cursorY = resultY + resultHeight + 24;
+    parts.push(`<text x="42" y="${cursorY}" font-family="Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="1.3" fill="#475569">OPTION COMPARISON</text>`);
+    parts.push(`<text x="580" y="${cursorY}" text-anchor="end" font-family="Arial, sans-serif" font-size="8" font-weight="700" fill="#b94b4b">RISKS</text><text x="602" y="${cursorY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#64748b">0</text><text x="624" y="${cursorY}" font-family="Arial, sans-serif" font-size="8" font-weight="700" fill="#438448">BENEFITS</text>`);
+    cursorY += 11;
+    const shownOptions = options.slice(0, 6);
+    if (!shownOptions.length) {
+      parts.push(`<text x="54" y="${cursorY + 22}" font-family="Arial, sans-serif" font-size="11" fill="#64748b">No options have been added yet.</text>`);
+      cursorY += 38;
+    }
+    shownOptions.forEach((entry) => {
+      const totals = entry.totals;
+      const name = fixedText(entry.node.text, 54, cursorY + 5, 390, { fontSize: 10.5, lineHeight: 12, weight: 600 });
+      const rowHeight = Math.max(29, name.height + 10);
+      const centerY = cursorY + rowHeight / 2;
+      const rated = totals.rated || 0;
+      const maximum = rated * 25;
+      const riskWidth = maximum ? Math.min(132, (totals.risks / maximum) * 132) : 0;
+      const benefitWidth = maximum ? Math.min(132, (totals.benefits / maximum) * 132) : 0;
+      const score = totals.disqualified ? "BLOCKED" : (totals.score === null ? "NOT EVALUATED" : `${totals.score >= 0 ? "+" : ""}${totals.score}`);
+      const scoreColor = totals.disqualified || totals.score < 0 ? "#b94b4b" : "#438448";
+      const isLeader = !needsMoreInfo && tied?.some((item) => item.node.id === entry.node.id) && !totals.disqualified;
+      const rowFill = totals.disqualified ? "#fff3f4" : (isLeader ? "#fff8e8" : "#f8fafc");
+      const rowStroke = totals.disqualified ? "#f4b8bf" : (isLeader ? "#e6bd68" : "#e2e8f0");
+      parts.push(`<rect x="42" y="${cursorY}" width="732" height="${rowHeight}" rx="6" fill="${rowFill}" stroke="${rowStroke}"/>`);
+      parts.push(name.svg);
+      parts.push(`<rect x="470" y="${centerY - 4}" width="132" height="7" rx="3.5" fill="#e2e8f0"/><rect x="602" y="${centerY - 4}" width="132" height="7" rx="3.5" fill="#e2e8f0"/>`);
+      parts.push(`<rect x="${602 - riskWidth}" y="${centerY - 4}" width="${riskWidth}" height="7" rx="3.5" fill="#c85c5c"/><rect x="602" y="${centerY - 4}" width="${benefitWidth}" height="7" rx="3.5" fill="#58a85d"/><line x1="602" y1="${centerY - 7}" x2="602" y2="${centerY + 7}" stroke="#64748b"/>`);
+      parts.push(`<text x="758" y="${centerY + 4}" text-anchor="end" font-family="Arial, sans-serif" font-size="10" font-weight="700" fill="${scoreColor}">${score}</text>`);
+      cursorY += rowHeight + 5;
+    });
+    if (options.length > shownOptions.length) {
+      parts.push(`<text x="54" y="${cursorY + 9}" font-family="Arial, sans-serif" font-size="9" fill="#64748b">+ ${options.length - shownOptions.length} additional option${options.length - shownOptions.length === 1 ? "" : "s"} in the full decision</text>`);
+      cursorY += 17;
+    }
+
+    const warningText = fixedText(warning || "No critical warnings were detected from the current ratings.", 58, 0, 690, { fontSize: 10.5, lineHeight: 13, weight: 500, fill: "#475569" });
+    const warningY = cursorY + 13;
+    const warningHeight = 41 + warningText.height;
+    parts.push(`<rect x="42" y="${warningY}" width="732" height="${warningHeight}" rx="8" fill="#fff9ea" stroke="#e7c46e"/>`);
+    parts.push(`<text x="58" y="${warningY + 21}" font-family="Arial, sans-serif" font-size="9" font-weight="700" letter-spacing="1.1" fill="#8a651d">CHECK BEFORE DECIDING</text>`);
+    parts.push(fixedText(warning || "No critical warnings were detected from the current ratings.", 58, warningY + 26, 690, { fontSize: 10.5, lineHeight: 13, weight: 500, fill: "#475569" }).svg);
+    cursorY = warningY + warningHeight + 22;
+
+    const evidenceSectionY = cursorY;
+    const evidenceStartIndex = parts.length;
+    const evidenceContext = leader ? `KEY EVIDENCE · ${leader.node.text}` : "KEY EVIDENCE";
+    const evidenceHeading = fixedText(evidenceContext.toUpperCase(), 42, cursorY, 732, { fontSize: 9.5, lineHeight: 12, weight: 700, fill: "#475569" });
+    parts.push(evidenceHeading.svg);
+    cursorY += evidenceHeading.height + 8;
+    const evidenceRows = (factors) => factors.length ? factors.map((factor) => {
+      const label = fixedText(factor.text, 0, 0, 274, { fontSize: 9.5, lineHeight: 11, weight: 600 });
+      return { factor, label, height: Math.max(26, label.height + (factor.isConstraint ? 10 : 2)) };
+    }) : [];
+    const benefitRows = evidenceRows(strongestBenefits);
+    const riskRows = evidenceRows(greatestRisks);
+    const evidenceHeight = Math.max(92, 42 + Math.max(benefitRows.reduce((sum, row) => sum + row.height, 0), riskRows.reduce((sum, row) => sum + row.height, 0)));
+    parts.push(`<rect x="42" y="${cursorY}" width="356" height="${evidenceHeight}" rx="8" fill="#eff9f1" stroke="#9bcfa0"/><rect x="418" y="${cursorY}" width="356" height="${evidenceHeight}" rx="8" fill="#fff2f2" stroke="#e3aaaa"/>`);
+    parts.push(`<text x="58" y="${cursorY + 23}" font-family="Arial, sans-serif" font-size="9" font-weight="700" letter-spacing="1" fill="#438448">STRONGEST BENEFITS</text><text x="434" y="${cursorY + 23}" font-family="Arial, sans-serif" font-size="9" font-weight="700" letter-spacing="1" fill="#a84646">GREATEST RISKS</text>`);
+    const addEvidenceRows = (rows, x, color, sign, emptyText) => {
+      if (!rows.length) {
+        parts.push(fixedText(emptyText, x, cursorY + 37, 312, { fontSize: 9.5, lineHeight: 12, weight: 500, fill: "#64748b" }).svg);
+        return;
+      }
+      let rowY = cursorY + 36;
+      rows.forEach(({ factor, label, height }) => {
+        const score = this.scoreForNode(factor);
+        parts.push(`<rect x="${x}" y="${rowY}" width="36" height="20" rx="10" fill="${color}"/><text x="${x + 18}" y="${rowY + 14}" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="700" fill="#fff">${sign}${score}</text>`);
+        parts.push(fixedText(factor.text, x + 45, rowY - 1, 265, { fontSize: 9.5, lineHeight: 11, weight: 600 }).svg);
+        if (factor.isConstraint) parts.push(`<text x="${x + 45}" y="${rowY + label.height + 7}" font-family="Arial, sans-serif" font-size="7" font-weight="700" fill="#a84646">DEAL-BREAKER</text>`);
+        rowY += height;
+      });
+    };
+    addEvidenceRows(benefitRows, 58, "#58a85d", "+", "No rated benefits in this option yet.");
+    addEvidenceRows(riskRows, 434, "#c85c5c", "−", "No rated risks in this option yet.");
+    cursorY += evidenceHeight + 22;
+
+    const snapshotSectionY = cursorY;
+    const snapshotStartIndex = parts.length;
+    parts.push(`<text x="42" y="${cursorY}" font-family="Arial, sans-serif" font-size="9.5" font-weight="700" letter-spacing="1.1" fill="#475569">LEADING OPTION SNAPSHOTS</text>`);
+    cursorY += 13;
+    const snapshotOptions = options.slice(0, 3);
+    const snapshots = snapshotOptions.map((entry) => {
+      const benefit = strongestInBranch(entry.node, "benefit");
+      const risk = strongestInBranch(entry.node, "risk");
+      return {
+        entry,
+        benefit,
+        risk,
+        title: fixedText(entry.node.text, 0, 0, 145, { fontSize: 9.5, lineHeight: 11, weight: 700 }),
+        benefitText: fixedText(`+ ${benefit?.text || "No rated benefit"}`, 0, 0, 202, { fontSize: 8, lineHeight: 9.5, weight: 550, fill: "#438448" }),
+        riskText: fixedText(`− ${risk?.text || "No rated risk"}`, 0, 0, 202, { fontSize: 8, lineHeight: 9.5, weight: 550, fill: "#a84646" }),
+      };
+    });
+    const snapshotHeight = Math.max(70, ...snapshots.map((item) => 31 + item.title.height + item.benefitText.height + item.riskText.height));
+    snapshots.forEach((item, index) => {
+      const { entry, benefit, risk } = item;
+      const x = 42 + index * 251;
+      const score = entry.totals.disqualified ? "BLOCKED" : (entry.totals.score === null ? "N/A" : `${entry.totals.score >= 0 ? "+" : ""}${entry.totals.score}`);
+      const scoreColor = entry.totals.disqualified || entry.totals.score < 0 ? "#b94b4b" : "#438448";
+      const cardFill = entry.totals.disqualified || entry.totals.score < 0 ? "#fff3f4" : (entry.totals.score === null ? "#f8fafc" : "#f1faf3");
+      const cardStroke = entry.totals.disqualified || entry.totals.score < 0 ? "#f4b8bf" : (entry.totals.score === null ? "#cbd5e1" : "#aed7b2");
+      parts.push(`<rect x="${x}" y="${cursorY}" width="230" height="${snapshotHeight}" rx="8" fill="${cardFill}" stroke="${cardStroke}"/><rect x="${x}" y="${cursorY}" width="230" height="4" rx="2" fill="${scoreColor}"/>`);
+      parts.push(fixedText(entry.node.text, x + 11, cursorY + 11, 145, { fontSize: 9.5, lineHeight: 11, weight: 700 }).svg);
+      parts.push(`<text x="${x + 218}" y="${cursorY + 23}" text-anchor="end" font-family="Arial, sans-serif" font-size="10" font-weight="700" fill="${scoreColor}">${score}</text>`);
+      const detailY = cursorY + 17 + item.title.height;
+      parts.push(fixedText(`+ ${benefit?.text || "No rated benefit"}`, x + 11, detailY, 206, { fontSize: 8, lineHeight: 9.5, weight: 550, fill: "#438448" }).svg);
+      parts.push(fixedText(`− ${risk?.text || "No rated risk"}`, x + 11, detailY + item.benefitText.height + 3, 206, { fontSize: 8, lineHeight: 9.5, weight: 550, fill: "#a84646" }).svg);
+    });
+    if (!snapshots.length) parts.push(`<text x="54" y="${cursorY + 24}" font-family="Arial, sans-serif" font-size="10" fill="#64748b">Add options to create comparison snapshots.</text>`);
+    const continuationBodies = [];
+    let snapshotContinuation = null;
+    if (cursorY + snapshotHeight > 1000) {
+      const moveEvidence = snapshotSectionY > 985;
+      const sectionStartIndex = moveEvidence ? evidenceStartIndex : snapshotStartIndex;
+      const sectionY = moveEvidence ? evidenceSectionY : snapshotSectionY;
+      const continuedParts = parts.splice(sectionStartIndex);
+      snapshotContinuation = `<g transform="translate(0 ${86 - sectionY})">${continuedParts.join("")}</g>`;
+    }
+
+    let remainingIndex = shownOptions.length;
+    while (remainingIndex < options.length) {
+      const body = [`<text x="42" y="74" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#172033">Option comparison · continued</text>`];
+      let rowY = 96;
+      let added = 0;
+      while (remainingIndex < options.length) {
+        const entry = options[remainingIndex];
+        const totals = entry.totals;
+        const name = fixedText(entry.node.text, 58, rowY + 12, 520, { fontSize: 11, lineHeight: 13, weight: 650 });
+        const rowHeight = Math.max(54, name.height + 32);
+        if (added && rowY + rowHeight > 988) break;
+        const score = totals.disqualified ? "BLOCKED" : (totals.score === null ? "NOT EVALUATED" : `${totals.score >= 0 ? "+" : ""}${totals.score}`);
+        const scoreColor = totals.disqualified || totals.score < 0 ? "#b94b4b" : "#438448";
+        const fill = totals.disqualified ? "#fff3f4" : (totals.score === null ? "#f8fafc" : "#f7faf8");
+        body.push(`<rect x="42" y="${rowY}" width="732" height="${rowHeight}" rx="7" fill="${fill}" stroke="#dbe2ea"/>`);
+        body.push(name.svg);
+        body.push(`<text x="758" y="${rowY + 25}" text-anchor="end" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="${scoreColor}">${score}</text>`);
+        body.push(`<text x="58" y="${rowY + rowHeight - 11}" font-family="Arial, sans-serif" font-size="9" fill="#438448">Benefits ${totals.benefits}</text><text x="145" y="${rowY + rowHeight - 11}" font-family="Arial, sans-serif" font-size="9" fill="#b94b4b">Risks ${totals.risks}</text><text x="215" y="${rowY + rowHeight - 11}" font-family="Arial, sans-serif" font-size="9" fill="#64748b">Rated ${totals.rated || 0}</text>`);
+        rowY += rowHeight + 7;
+        remainingIndex += 1;
+        added += 1;
+      }
+      continuationBodies.push(body.join(""));
+    }
+    if (snapshotContinuation) continuationBodies.push(snapshotContinuation);
+
+    const totalPages = 1 + continuationBodies.length;
+    const footer = (pageNumber) => `<line x1="42" y1="1012" x2="774" y2="1012" stroke="#e2e8f0"/><text x="42" y="1033" font-family="Arial, sans-serif" font-size="8.5" fill="#64748b">Scores support judgment; they do not replace it.</text><text x="408" y="1033" text-anchor="middle" font-family="Arial, sans-serif" font-size="8.5" fill="#64748b">Page ${pageNumber} of ${totalPages}</text><text x="774" y="1033" text-anchor="end" font-family="Arial, sans-serif" font-size="8.5" font-weight="700" fill="#9a681b">THE KEMPF SIMPLE DECISION HELPER</text>`;
+    parts.push(footer(1), `</svg>`);
+    const continuationPages = continuationBodies.map((body, index) => [
+      `<?xml version="1.0" encoding="UTF-8"?>`,
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${pageWidth}" height="${pageHeight}" viewBox="0 0 ${pageWidth} ${pageHeight}">`,
+      `<rect width="${pageWidth}" height="${pageHeight}" fill="#ffffff"/><rect x="0" y="0" width="${pageWidth}" height="8" fill="#d89b32"/>`,
+      `<text x="42" y="39" font-family="Arial, sans-serif" font-size="10" font-weight="700" letter-spacing="1.8" fill="#9a681b">DECISION BRIEF · CONTINUED</text>`,
+      `<text x="774" y="39" text-anchor="end" font-family="Arial, sans-serif" font-size="9" fill="#64748b">${esc(new Date().toLocaleDateString())}</text>`,
+      body,
+      footer(index + 2),
+      `</svg>`,
+    ].join(""));
+    return { svgs: [parts.join(""), ...continuationPages], width: pageWidth, height: pageHeight };
+  }
+
+  async exportPresentationPdf() {
+    try {
+      const { svgs, width, height } = this.buildPresentationSvg();
+      const scale = Math.max(1, Math.min(2, 8000 / Math.max(width, height)));
+      const pixelWidth = Math.round(width * scale);
+      const pixelHeight = Math.round(height * scale);
+      const jpgs = [];
+      for (const svg of svgs) jpgs.push({ blob: await this.svgToJpegBlob(svg, width, height), pixelWidth, pixelHeight });
+      const pdf = await this.jpegsToPdf(jpgs);
+      const suggestedName = `${this.exportBaseName()} presentation.pdf`;
+      new PresentationPreviewModal(this.app, {
+        pdf,
+        svgs,
+        suggestedName,
+        onSave: async (document, filename) => {
+          const saved = await this.saveExportFile(document, filename, "application/pdf", "Presentation PDF", ["pdf"]);
+          if (saved) new Notice("Presentation PDF exported.");
+          return saved;
+        },
+      }).open();
+    } catch (error) {
+      console.error("Decision Helper presentation export failed", error);
+      new Notice("The presentation PDF could not be created on this device.");
+    }
+  }
+
   async exportPdf() {
     try {
       const { svg, width, height } = this.buildSvgExport();
@@ -2185,6 +3729,8 @@ class DecisionMapView extends TextFileView {
     if (!root) return { positions, width: 760 + CANVAS_SPACE * 2, height: 520 + CANVAS_SPACE * 2 };
 
     const direction = this.map.layout || "down";
+    if (direction.startsWith("linear-")) return this.calculateLinearLayout(root, direction);
+    if (direction.startsWith("staggered-")) return this.calculateStaggeredLayout(root, direction.slice("staggered-".length));
     const vertical = direction === "down" || direction === "up";
     const siblingPreset = this.map.siblingSpacing || "regular";
     const levelPreset = this.map.levelSpacing || "regular";
@@ -2263,49 +3809,258 @@ class DecisionMapView extends TextFileView {
     };
   }
 
+  directionalSubtreeLayout(root, direction) {
+    const positions = new Map();
+    const vertical = direction === "down" || direction === "up";
+    const siblingPreset = this.map.siblingSpacing || "regular";
+    const levelPreset = this.map.levelSpacing || "regular";
+    const siblingGap = siblingPreset === "extended" ? 300 : (siblingPreset === "compact" ? 24 : (vertical ? VERTICAL_SIBLING_GAP : HORIZONTAL_SIBLING_GAP));
+    const levelGap = levelPreset === "extended" ? 300 : (levelPreset === "compact" ? 55 : (vertical ? VERTICAL_LEVEL_GAP : HORIZONTAL_LEVEL_GAP));
+    const crossStep = vertical ? CARD_WIDTH + siblingGap : CARD_HEIGHT + SCORE_FOOTER_HEIGHT + siblingGap;
+    const depthStep = vertical ? CARD_HEIGHT + SCORE_FOOTER_HEIGHT + levelGap : CARD_WIDTH + levelGap;
+    let leafIndex = 0;
+    const place = (node, depth) => {
+      const children = this.visibleChildren(node);
+      let cross;
+      if (!children.length) {
+        cross = leafIndex * crossStep;
+        leafIndex += 1;
+      } else {
+        const childCrosses = children.map((child) => place(child, depth + 1));
+        cross = (childCrosses[0] + childCrosses[childCrosses.length - 1]) / 2;
+      }
+      const signedDepth = (direction === "up" || direction === "left" ? -1 : 1) * depth * depthStep;
+      positions.set(node.id, {
+        x: (vertical ? cross : signedDepth) - CARD_WIDTH / 2,
+        y: (vertical ? signedDepth : cross) - CARD_HEIGHT / 2,
+      });
+      return cross;
+    };
+    place(root, 0);
+    const values = [...positions.values()];
+    return {
+      positions,
+      bounds: {
+        minX: Math.min(...values.map((position) => position.x)),
+        minY: Math.min(...values.map((position) => position.y)),
+        maxX: Math.max(...values.map((position) => position.x + CARD_WIDTH)),
+        maxY: Math.max(...values.map((position) => position.y + CARD_HEIGHT + SCORE_FOOTER_HEIGHT)),
+      },
+    };
+  }
+
+  finalizeLayoutPositions(positions) {
+    const values = [...positions.values()];
+    if (!values.length) return { positions, width: 760 + CANVAS_SPACE * 2, height: 520 + CANVAS_SPACE * 2 };
+    const minX = Math.min(...values.map((position) => position.x));
+    const minY = Math.min(...values.map((position) => position.y));
+    const maxX = Math.max(...values.map((position) => position.x + CARD_WIDTH));
+    const maxY = Math.max(...values.map((position) => position.y + CARD_HEIGHT + SCORE_FOOTER_HEIGHT));
+    const spanWidth = maxX - minX;
+    const spanHeight = maxY - minY;
+    const contentWidth = Math.max(760, spanWidth + TREE_MARGIN * 2);
+    const contentHeight = Math.max(520, spanHeight + TREE_MARGIN * 2);
+    const offsetX = CANVAS_SPACE + (contentWidth - spanWidth) / 2 - minX;
+    const offsetY = CANVAS_SPACE + (contentHeight - spanHeight) / 2 - minY;
+    for (const position of positions.values()) {
+      position.x += offsetX;
+      position.y += offsetY;
+    }
+    return { positions, width: contentWidth + CANVAS_SPACE * 2, height: contentHeight + CANVAS_SPACE * 2 };
+  }
+
+  calculateStaggeredLayout(root, direction) {
+    const positions = new Map();
+    const horizontal = direction === "left" || direction === "right";
+    const positive = direction === "right" || direction === "down";
+    const siblingPreset = this.map.siblingSpacing || "regular";
+    const levelPreset = this.map.levelSpacing || "regular";
+    const primaryGap = levelPreset === "extended" ? 300 : (levelPreset === "compact" ? 90 : 150);
+    const bandGap = siblingPreset === "extended" ? 300 : (siblingPreset === "compact" ? 36 : 70);
+    const staggerStep = siblingPreset === "extended" ? 95 : (siblingPreset === "compact" ? 24 : 38);
+    const crossGap = siblingPreset === "extended" ? 300 : (siblingPreset === "compact" ? 70 : 110);
+    positions.set(root.id, { x: -CARD_WIDTH / 2, y: -CARD_HEIGHT / 2 });
+    const rootHalf = horizontal ? CARD_WIDTH / 2 : CARD_HEIGHT / 2;
+    const initialCursor = rootHalf + primaryGap;
+    const sideCursors = [initialCursor, initialCursor];
+    let previousBandStart = initialCursor - staggerStep;
+    this.visibleChildren(root).forEach((branch, index) => {
+      const branchDirection = horizontal ? (index % 2 === 0 ? "up" : "down") : (index % 2 === 0 ? "left" : "right");
+      const tree = this.directionalSubtreeLayout(branch, branchDirection);
+      const primaryMin = horizontal ? tree.bounds.minX : tree.bounds.minY;
+      const primaryMax = horizontal ? tree.bounds.maxX : tree.bounds.maxY;
+      const crossMin = horizontal ? tree.bounds.minY : tree.bounds.minX;
+      const crossMax = horizontal ? tree.bounds.maxY : tree.bounds.maxX;
+      const primarySpan = primaryMax - primaryMin;
+      const negativeSide = branchDirection === "up" || branchDirection === "left";
+      const sideIndex = negativeSide ? 0 : 1;
+      const bandStart = Math.max(sideCursors[sideIndex], previousBandStart + staggerStep);
+      const primaryShift = positive ? bandStart - primaryMin : -bandStart - primaryMax;
+      const crossShift = negativeSide ? -crossGap - crossMax : crossGap - crossMin;
+      for (const [nodeId, position] of tree.positions) {
+        positions.set(nodeId, horizontal
+          ? { x: position.x + primaryShift, y: position.y + crossShift }
+          : { x: position.x + crossShift, y: position.y + primaryShift });
+      }
+      sideCursors[sideIndex] = bandStart + primarySpan + bandGap;
+      previousBandStart = bandStart;
+    });
+    return this.finalizeLayoutPositions(positions);
+  }
+
+  calculateLinearLayout(root, direction) {
+    const positions = new Map();
+    const siblingPreset = this.map.siblingSpacing || "regular";
+    const levelPreset = this.map.levelSpacing || "regular";
+    const rowGap = siblingPreset === "extended" ? 95 : (siblingPreset === "compact" ? 18 : 38);
+    const indent = levelPreset === "extended" ? 438 : (levelPreset === "compact" ? 145 : 236);
+    const [, sequenceDirection, branchDirection] = direction.split("-");
+    const verticalSequence = sequenceDirection === "up" || sequenceDirection === "down";
+    const rowStep = (verticalSequence ? CARD_HEIGHT + SCORE_FOOTER_HEIGHT : CARD_WIDTH) + rowGap;
+    const firstSequence = verticalSequence ? 170 : CARD_WIDTH + rowGap;
+    let rowIndex = 0;
+    let maximumX = CARD_WIDTH;
+    let maximumY = CARD_HEIGHT + SCORE_FOOTER_HEIGHT;
+
+    const placeChildren = (parent, depth) => {
+      for (const child of this.visibleChildren(parent)) {
+        const sequence = firstSequence + rowIndex * rowStep;
+        const branch = depth * indent;
+        const x = verticalSequence ? branch : sequence;
+        const y = verticalSequence ? sequence : branch;
+        positions.set(child.id, { x, y });
+        maximumX = Math.max(maximumX, x + CARD_WIDTH);
+        maximumY = Math.max(maximumY, y + CARD_HEIGHT + SCORE_FOOTER_HEIGHT);
+        rowIndex += 1;
+        placeChildren(child, depth + 1);
+      }
+    };
+
+    positions.set(root.id, { x: 0, y: 0 });
+    placeChildren(root, 1);
+    const goesLeft = sequenceDirection === "left" || branchDirection === "left";
+    const goesUp = sequenceDirection === "up" || branchDirection === "up";
+    if (goesLeft || goesUp) {
+      for (const position of positions.values()) {
+        if (goesLeft) position.x = maximumX - CARD_WIDTH - position.x;
+        if (goesUp) position.y = maximumY - CARD_HEIGHT - SCORE_FOOTER_HEIGHT - position.y;
+      }
+    }
+    const contentWidth = Math.max(760, maximumX + TREE_MARGIN * 2);
+    const contentHeight = Math.max(520, maximumY + TREE_MARGIN * 2);
+    const offsetX = CANVAS_SPACE + (contentWidth - maximumX) / 2;
+    const offsetY = CANVAS_SPACE + TREE_MARGIN;
+    for (const position of positions.values()) {
+      position.x += offsetX;
+      position.y += offsetY;
+    }
+    return { positions, width: contentWidth + CANVAS_SPACE * 2, height: contentHeight + CANVAS_SPACE * 2 };
+  }
+
+  staggeredBranchDirection(nodeId, trunkDirection) {
+    const root = this.getNode(this.map.rootId);
+    let branch = this.getNode(nodeId);
+    while (branch?.parentId && branch.parentId !== root?.id) branch = this.getNode(branch.parentId);
+    const index = Math.max(0, root?.childIds.indexOf(branch?.id) ?? 0);
+    return trunkDirection === "left" || trunkDirection === "right"
+      ? (index % 2 === 0 ? "up" : "down")
+      : (index % 2 === 0 ? "left" : "right");
+  }
+
+  connectorAnchor(position, direction, outgoing, cardHeight = CARD_HEIGHT) {
+    if (direction === "right") return { x: outgoing ? position.x + CARD_WIDTH : position.x, y: position.y + cardHeight / 2 };
+    if (direction === "left") return { x: outgoing ? position.x : position.x + CARD_WIDTH, y: position.y + cardHeight / 2 };
+    if (direction === "down") return { x: position.x + CARD_WIDTH / 2, y: outgoing ? position.y + cardHeight : position.y };
+    return { x: position.x + CARD_WIDTH / 2, y: outgoing ? position.y : position.y + cardHeight };
+  }
+
+  labelNearChild(start, end, branchDirection) {
+    if (branchDirection === "left" || branchDirection === "right") {
+      const distance = Math.abs(end.x - start.x);
+      const offset = Math.min(72, distance / 2);
+      return { x: end.x + Math.sign(start.x - end.x) * offset, y: end.y - 5 };
+    }
+    const distance = Math.abs(end.y - start.y);
+    const offset = Math.min(38, distance / 2);
+    return { x: end.x, y: end.y + Math.sign(start.y - end.y) * offset - 5 };
+  }
+
+  edgeGeometry(parent, child, childId, cardHeight = CARD_HEIGHT) {
+    const layout = this.map.layout || "down";
+    if (layout.startsWith("linear-")) {
+      const [, sequenceDirection, branchDirection] = layout.split("-");
+      const verticalSequence = sequenceDirection === "up" || sequenceDirection === "down";
+      let start;
+      let end;
+      let path;
+      if (verticalSequence) {
+        const goesLeft = branchDirection === "left";
+        start = { x: goesLeft ? parent.x + CARD_WIDTH - 16 : parent.x + 16, y: sequenceDirection === "up" ? parent.y : parent.y + cardHeight };
+        end = { x: goesLeft ? child.x + CARD_WIDTH : child.x, y: child.y + cardHeight / 2 };
+        path = `M ${start.x} ${start.y} L ${start.x} ${end.y} L ${end.x} ${end.y}`;
+        const label = this.labelNearChild(start, end, branchDirection);
+        return { start, end, path, labelX: label.x, labelY: label.y, linear: true };
+      }
+      const branchUp = branchDirection === "up";
+      start = { x: sequenceDirection === "left" ? parent.x : parent.x + CARD_WIDTH, y: branchUp ? parent.y + cardHeight - 16 : parent.y + 16 };
+      end = { x: child.x + CARD_WIDTH / 2, y: branchUp ? child.y + cardHeight : child.y };
+      path = `M ${start.x} ${start.y} L ${end.x} ${start.y} L ${end.x} ${end.y}`;
+      const label = this.labelNearChild(start, end, branchDirection);
+      return { start, end, path, labelX: label.x, labelY: label.y, linear: true };
+    }
+
+    let direction = layout;
+    let staggeredRoot = false;
+    if (layout.startsWith("staggered-")) {
+      const trunkDirection = layout.slice("staggered-".length);
+      direction = this.staggeredBranchDirection(childId, trunkDirection);
+      staggeredRoot = this.getNode(childId)?.parentId === this.map.rootId;
+      if (staggeredRoot) {
+        const start = this.connectorAnchor(parent, trunkDirection, true, cardHeight);
+        const end = this.connectorAnchor(child, direction, false, cardHeight);
+        const path = trunkDirection === "left" || trunkDirection === "right"
+          ? `M ${start.x} ${start.y} L ${end.x} ${start.y} L ${end.x} ${end.y}`
+          : `M ${start.x} ${start.y} L ${start.x} ${end.y} L ${end.x} ${end.y}`;
+        const label = this.labelNearChild(start, end, direction);
+        return { start, end, path, labelX: label.x, labelY: label.y, linear: false };
+      }
+    }
+    const start = this.connectorAnchor(parent, direction, true, cardHeight);
+    const end = this.connectorAnchor(child, direction, false, cardHeight);
+    const middleX = start.x + (end.x - start.x) / 2;
+    const middleY = start.y + (end.y - start.y) / 2;
+    const horizontal = direction === "left" || direction === "right";
+    const path = horizontal
+      ? `M ${start.x} ${start.y} C ${middleX} ${start.y}, ${middleX} ${end.y}, ${end.x} ${end.y}`
+      : `M ${start.x} ${start.y} C ${start.x} ${middleY}, ${end.x} ${middleY}, ${end.x} ${end.y}`;
+    return { start, end, path, labelX: middleX, labelY: middleY - 5, linear: false };
+  }
+
   drawEdges(svg, positions) {
     for (const node of this.map.nodes) {
       if (!node.parentId) continue;
+      if (!this.isVisibleInFocus(node.id) || !this.isVisibleInFocus(node.parentId)) continue;
       const parent = positions.get(node.parentId);
       const child = positions.get(node.id);
       if (!parent || !child) continue;
 
-      const direction = this.map.layout || "down";
-      let x1;
-      let y1;
-      let x2;
-      let y2;
-      if (direction === "up") {
-        x1 = parent.x + CARD_WIDTH / 2; y1 = parent.y;
-        x2 = child.x + CARD_WIDTH / 2; y2 = child.y + CARD_HEIGHT;
-      } else if (direction === "right") {
-        x1 = parent.x + CARD_WIDTH; y1 = parent.y + CARD_HEIGHT / 2;
-        x2 = child.x; y2 = child.y + CARD_HEIGHT / 2;
-      } else if (direction === "left") {
-        x1 = parent.x; y1 = parent.y + CARD_HEIGHT / 2;
-        x2 = child.x + CARD_WIDTH; y2 = child.y + CARD_HEIGHT / 2;
-      } else {
-        x1 = parent.x + CARD_WIDTH / 2; y1 = parent.y + CARD_HEIGHT;
-        x2 = child.x + CARD_WIDTH / 2; y2 = child.y;
-      }
-      const horizontal = direction === "right" || direction === "left";
-      const middleX = x1 + (x2 - x1) / 2;
-      const middleY = y1 + (y2 - y1) / 2;
+      const geometry = this.edgeGeometry(parent, child, node.id);
+      const linearEdge = geometry.linear;
+      const dimmedClass = this.shouldDimNode(node.id) ? " is-dimmed" : "";
       svg.createSvg("path", {
         attr: {
-          class: "kdh-line",
-          d: horizontal
-            ? `M ${x1} ${y1} C ${middleX} ${y1}, ${middleX} ${y2}, ${x2} ${y2}`
-            : `M ${x1} ${y1} C ${x1} ${middleY}, ${x2} ${middleY}, ${x2} ${y2}`,
+          class: `kdh-line${linearEdge ? ` is-linear is-${node.type}` : ""}${dimmedClass}`,
+          "data-node-id": node.id,
+          d: geometry.path,
         },
       });
 
       const label = node.relationship || DEFAULT_RELATIONSHIPS[node.type] || NODE_TYPES[node.type]?.label || "Related";
       const shownLabel = label.length > 26 ? `${label.slice(0, 25)}…` : label;
-      const labelX = middleX;
-      const labelY = middleY - 5;
+      const labelX = geometry.labelX;
+      const labelY = geometry.labelY;
       const labelWidth = Math.max(62, Math.min(190, shownLabel.length * 6.5 + 20));
-      const group = svg.createSvg("g", { attr: { class: "kdh-edge-label", "data-node-id": node.id } });
+      const group = svg.createSvg("g", { attr: { class: `kdh-edge-label${dimmedClass}`, "data-node-id": node.id } });
       group.createSvg("rect", { attr: { x: String(labelX - labelWidth / 2), y: String(labelY - 13), width: String(labelWidth), height: "23", rx: "11" } });
       group.createSvg("text", { attr: { x: String(labelX), y: String(labelY + 2), "text-anchor": "middle" } }).setText(shownLabel);
       group.addEventListener("dblclick", () => this.editRelationship(node));
@@ -2314,19 +4069,39 @@ class DecisionMapView extends TextFileView {
 
   drawNodes(canvas, positions) {
     for (const node of this.map.nodes) {
+      if (!this.isVisibleInFocus(node.id)) continue;
       const position = positions.get(node.id);
       if (!position) continue;
       const typeClass = NODE_TYPES[node.type]?.color || "option";
       const selectedClass = node.id === this.map.selectedId ? " is-selected" : "";
+      const dimmedClass = this.shouldDimNode(node.id) ? " is-dimmed" : "";
       const dealBreakerClass = node.type === "risk" && node.isConstraint ? " is-deal-breaker" : "";
-      const card = canvas.createDiv({ cls: `kdh-node kdh-type-${typeClass}${dealBreakerClass}${selectedClass}` });
+      const lockingId = this.lockingNodeId(node.id);
+      const lockedClass = lockingId ? " is-locked" : "";
+      const childrenClass = node.childIds.length ? " has-children" : "";
+      const card = canvas.createDiv({ cls: `kdh-node kdh-type-${typeClass}${dealBreakerClass}${selectedClass}${dimmedClass}${lockedClass}${childrenClass}` });
       card.dataset.nodeId = node.id;
       card.setAttribute("aria-selected", node.id === this.map.selectedId ? "true" : "false");
-      card.draggable = Boolean(node.parentId);
+      card.draggable = Boolean(node.parentId && !lockingId);
       card.style.left = `${position.x}px`;
       card.style.top = `${position.y}px`;
       card.createDiv({ cls: "kdh-node-type", text: NODE_TYPES[node.type]?.label || node.type });
       card.createDiv({ cls: "kdh-node-text", text: node.text });
+      if (lockingId) {
+        const lockingNode = this.getNode(lockingId);
+        const lockBadge = card.createSpan({
+          cls: "kdh-lock-badge",
+          attr: { "aria-label": `Branch locked by ${lockingNode?.text || "ancestor"}`, title: `Branch locked by ${lockingNode?.text || "ancestor"}` },
+        });
+        setIcon(lockBadge, "lock");
+      }
+      if ((node.type === "benefit" || node.type === "risk") && this.factorHasEvidence(node)) {
+        const evidenceBadge = card.createSpan({
+          cls: "kdh-evidence-badge",
+          attr: { "aria-label": "Supporting evidence attached", title: "Supporting evidence attached" },
+        });
+        setIcon(evidenceBadge, "paperclip");
+      }
 
       const factorScore = this.scoreForNode(node);
       if (this.map.showScoreLabels !== false && (node.type === "benefit" || node.type === "risk")) {
@@ -2362,6 +4137,8 @@ class DecisionMapView extends TextFileView {
           const tied = totals?.tiedOptions || [];
           scoreBox.createDiv({ cls: `kdh-simple-score${needsMoreInfo ? " is-incomplete" : ""}`, text: needsMoreInfo ? "Not evaluated" : (tied.length > 1 ? `Tie: ${tied.map((item) => item.text).join(" · ")}` : `Current leader: ${totals.chosenOption?.text || "None"}`) });
           if (!needsMoreInfo) scoreBox.createDiv({ cls: `kdh-simple-score-detail${totals.score < 0 ? " is-negative" : ""}`, text: `${this.scoreDescription(totals.score)} · ${totals.score >= 0 ? "+" : ""}${totals.score}` });
+        } else if (totals.score === null) {
+          scoreBox.createDiv({ cls: "kdh-simple-score is-incomplete", text: "Not evaluated · required path missing" });
         } else if (totals.disqualified) {
           scoreBox.createDiv({ cls: "kdh-simple-score is-blocked", text: `Blocked: ${totals.disqualifyingRisk?.text || "deal-breaker risk"}` });
         } else {
@@ -2369,10 +4146,23 @@ class DecisionMapView extends TextFileView {
         }
       }
 
-      if (node.type === "decision" || node.type === "option") {
-        const add = card.createEl("button", { cls: "kdh-add-child clickable-icon", attr: { "aria-label": "Add connected item" } });
-        setIcon(add, "plus");
-        add.addEventListener("click", (event) => { event.stopPropagation(); this.addChild(node); });
+      if (node.childIds.length) {
+        const childCount = node.childIds.length;
+        const collapse = card.createEl("button", {
+          cls: `kdh-collapse-toggle${node.collapsed ? " is-collapsed" : ""}`,
+          attr: {
+            "aria-label": `${node.collapsed ? "Expand" : "Collapse"} branch with ${childCount} connected item${childCount === 1 ? "" : "s"}`,
+            "aria-expanded": String(!node.collapsed),
+            title: node.collapsed ? "Expand branch" : "Collapse branch",
+          },
+        });
+        collapse.createSpan({ cls: "kdh-collapse-badge", text: node.collapsed ? `+${childCount}` : "−" });
+        collapse.addEventListener("pointerdown", (event) => event.stopPropagation());
+        collapse.addEventListener("dblclick", (event) => event.stopPropagation());
+        collapse.addEventListener("click", (event) => {
+          event.stopPropagation();
+          this.toggleBranch(node);
+        });
       }
 
       card.addEventListener("dblclick", () => this.editNode(node));
@@ -2470,7 +4260,7 @@ class DecisionMapView extends TextFileView {
     scroller.addEventListener("wheel", (event) => {
       event.preventDefault();
       const oldZoom = this.map.zoom || 1;
-      const nextZoom = Math.max(0.2, Math.min(2, oldZoom * (event.deltaY < 0 ? 1.1 : 0.9)));
+      const nextZoom = Math.max(MIN_ZOOM, Math.min(2, oldZoom * (event.deltaY < 0 ? 1.1 : 0.9)));
       const rect = scroller.getBoundingClientRect();
       this.setZoomAt(nextZoom, event.clientX - rect.left, event.clientY - rect.top);
     }, { passive: false });
@@ -2540,7 +4330,7 @@ class DecisionMapView extends TextFileView {
         this.map.scrollTop = scroller.scrollTop;
         if (!touchMoved) {
           this.map.selectedId = null;
-          canvas.querySelectorAll(".kdh-node.is-selected").forEach((element) => element.removeClass("is-selected"));
+          this.updateSelectionStyles();
           this.renderSummaryContent();
         }
         await this.saveMap();
@@ -2574,7 +4364,7 @@ class DecisionMapView extends TextFileView {
         const moved = Math.hypot(stopEvent.clientX - startX, stopEvent.clientY - startY);
         if (event.button === 0 && moved < 4) {
           this.map.selectedId = null;
-          canvas.querySelectorAll(".kdh-node.is-selected").forEach((element) => element.removeClass("is-selected"));
+          this.updateSelectionStyles();
           this.renderSummaryContent();
         }
         await this.saveMap();
@@ -2586,13 +4376,15 @@ class DecisionMapView extends TextFileView {
   }
 }
 
-module.exports = class KempfsSimpleDecisionHelper extends Plugin {
+module.exports = class KempfSimpleDecisionHelperPlugin extends Plugin {
   async onload() {
     this.settings = { ...DEFAULT_SETTINGS, ...(await this.loadData()) };
+    this.settings.defaultBackground = normalizeBackground(this.settings.defaultBackground);
+    this.settings.defaultLayout = normalizeLayout(this.settings.defaultLayout);
     this.registerView(VIEW_TYPE, (leaf) => new DecisionMapView(leaf, this));
     this.registerExtensions([FILE_EXTENSION], VIEW_TYPE);
     this.addSettingTab(new DecisionHelperSettingTab(this.app, this));
-    this.addRibbonIcon("git-branch", "New decision", () => this.createNewDecision());
+    this.addRibbonIcon("git-branch", "Create The Kempf Simple Decision Helper", () => this.createNewDecision());
     this.addCommand({ id: "new-decision", name: "Create new decision", callback: () => this.createNewDecision() });
   }
 
@@ -2620,7 +4412,6 @@ module.exports = class KempfsSimpleDecisionHelper extends Plugin {
         if (item && !(item instanceof TFolder)) throw new Error("A file blocks part of that folder path.");
         if (!item) await this.app.vault.createFolder(current);
       }
-      new Notice(`Decision folder set to ${path}`);
       return path;
     } catch (error) {
       new Notice(error?.message || "The folder could not be created.");
@@ -2650,29 +4441,12 @@ module.exports = class KempfsSimpleDecisionHelper extends Plugin {
   }
 
   createNewDecision() {
-    new NodeEditorModal(this.app, {
-      heading: "Enter the decision",
-      type: "decision",
-      isRoot: true,
-      onSave: async ({ text }) => {
-        const root = {
-          id: `node-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          text,
-          type: "decision",
-          parentId: null,
-          relationship: "",
-          likelihood: 0,
-          impact: 0,
-          isConstraint: false,
-          subOptionMode: this.settings.defaultSubOptionMode,
-          childIds: [],
-        };
-        const map = { ...newMapWithDefaults(this.settings), rootId: root.id, selectedId: root.id, nodes: [root] };
+    new CreateDecisionModal(this.app, this.settings, async (text, templateId) => {
+        const map = createDecisionMapFromTemplate(this.settings, text, templateId);
         const file = await this.app.vault.create(this.availablePath(text), JSON.stringify(map, null, 2));
         const leaf = this.app.workspace.getLeaf("tab");
         await leaf.openFile(file);
         this.app.workspace.revealLeaf(leaf);
-      },
     }).open();
   }
 };

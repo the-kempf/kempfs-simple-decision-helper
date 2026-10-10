@@ -8,6 +8,11 @@ Big decisions rarely arrive as neat lists. The Kempf Simple Decision Helper turn
 
 Use it to compare purchases, home projects, education or career paths, family options, and other choices that feel stuck. No spreadsheet or decision-theory experience is needed, and every recommendation remains transparent and editable.
 
+<p align="center">
+  <img src="assets/decision-helper-paper-layout.jpg" alt="A complete home-improvement decision in the Paper background" width="49%">
+  <img src="assets/decision-helper-dark-layout.jpg" alt="The same home-improvement decision with its summary in the Dark background" width="49%">
+</p>
+
 ## What it helps you do
 
 - **See the whole choice clearly.** Turn scattered thoughts into Options, Benefits, Risks, and smaller sub-options.

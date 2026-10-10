@@ -1,38 +1,27 @@
 # The Kempf Simple Decision Helper
 
-A visual decision-mapping plugin for [Obsidian](https://obsidian.md/).
+**Turn a difficult choice into a decision you can see, compare, and explain.**
 
-The Kempf Simple Decision Helper turns a difficult choice into a clear map of options, benefits, risks, and sub-options. It calculates consistent comparison scores without turning the decision into a complicated spreadsheet.
+![A home-improvement decision shown as a visual map with options, benefits, risks, scores, and a clear recommendation](assets/decision-helper-overview.png)
 
-The plugin is deliberately simple to operate: build the map, rate what matters, and compare the available paths.
+Big decisions rarely arrive as neat lists. The Kempf Simple Decision Helper turns competing thoughts into a clear visual map: add your choices, place the likely benefits and risks beneath them, and rate what matters to you. The Decision Summary then shows which option has the strongest support and why.
 
-## Current beta
+Use it to compare purchases, home projects, education or career paths, family options, and other choices that feel stuck. No spreadsheet or decision-theory experience is needed, and every recommendation remains transparent and editable.
 
-The current beta is **0.3.49**. It includes the visual layout picker, all Standard, Staggered, and Linear directions, branch focus and locking, collapsible branches, pinned node information, three background themes, and presentation PDF export.
+## What it helps you do
 
-## What it does
-
-- Gives every decision its own `.ksdh` file inside your vault.
-- Starts from Blank, Simple Choice, Buy or Keep, Education/Training, or Home Improvement templates with a preview before creation.
-- Arranges the decision automatically in a clean visual tree.
-- Chooses Standard, Staggered, or Linear layouts in a dedicated visual picker with a live directional preview.
-- Keeps the dotted workspace stationary while the decision pans, creating a steadier infinite-canvas effect.
-- Compares any number of top-level options.
-- Pins selected node information while you inspect other branches and remembers whether that information is collapsed.
-- Supports sub-options that represent either alternative paths or parts of one combined plan.
-- Rates benefits and risks using two understandable 1–5 scales.
-- Records optional supporting notes behind each rating.
-- Clearly marks deal-breakers that disqualify an option.
-- Shows the current recommendation, ties, incomplete options, and sensitive results.
-- Supports mouse, keyboard, and touchscreen navigation.
-- Uses Mind Map-style branch controls to collapse children, expand whole branches, collapse to a selected node's level, or collapse and expand the entire map.
-- Locks a branch against edits, moves, pastes, and deletion, with the lock inherited by every descendant.
-- Focuses branches, searches node titles, and fits the visible decision to the workspace.
-- Lets each decision control how strongly unrelated branches are dimmed.
-- Exports readable Markdown reports, JSON backups, SVG, JPG, and PDF.
-- Works locally without AI, accounts, analytics, or external services.
+- **See the whole choice clearly.** Turn scattered thoughts into Options, Benefits, Risks, and smaller sub-options.
+- **Compare choices fairly.** Rate Likelihood and Impact on simple 1–5 scales and see every option on the same −100 to +100 scale.
+- **Understand the recommendation.** The Decision Summary shows the current leader, the balance of benefits and risks, and warnings when more information may be needed.
+- **Keep important context.** Add supporting notes that explain why a rating was chosen.
+- **Handle real limits.** Mark a Risk as a deal-breaker when it makes an option unacceptable regardless of its score.
+- **Stay focused as the map grows.** Collapse, focus, lock, search, and dim branches without changing the decision itself.
+- **Share the result.** Create readable reports, images, PDFs, and a polished presentation brief.
+- **Keep your decisions private.** Everything stays inside your Obsidian vault, with no account, analytics, AI service, or internet connection required.
 
 ## Quick start
+
+Begin with a blank decision or preview a template for a Simple Choice, Buy or Keep decision, Education/Training choice, or Home Improvement project.
 
 1. Create a new decision from the ribbon icon or command palette.
 2. Write the question, choose a starting template, and use Preview to inspect it before creation.
@@ -40,10 +29,6 @@ The current beta is **0.3.49**. It includes the visual layout picker, all Standa
 4. Add **Benefits** and **Risks** beneath each option.
 5. Rate each factor for **Likelihood** and **Impact**, from 1 to 5.
 6. Compare the options in the Decision Summary.
-
-The Decision Summary remembers whether you left it expanded or collapsed when you reopen the decision.
-
-The score supports your judgment; it does not replace it.
 
 ## Layouts and appearance
 
@@ -148,11 +133,15 @@ Decision Options can dim unrelated branches. When a non-root node is selected, i
 - PDF creates a printable one-page overview.
 - Presentation PDF creates a polished Letter-size decision brief with the recommendation, comparison chart, warning, strongest benefits, greatest risks, and leading option snapshots. It stays compact when possible and adds clearly divided continuation pages when the content cannot fit. A Save/Cancel preview shows every page before the system save dialog.
 
+## Current release
+
+The current stable release is **1.0.0**. See the [changelog](CHANGELOG.md) for release history.
+
 ## Installation
 
-### Community Plugins
+### Install from Obsidian
 
-Once available in the Obsidian Community Plugins directory:
+The plugin is available in the Obsidian Community Plugins directory:
 
 1. Open **Settings → Community plugins**.
 2. Select **Browse**.

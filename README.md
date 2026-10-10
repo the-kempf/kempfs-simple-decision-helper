@@ -1,4 +1,4 @@
-# The Kempf Simple Decision Helper
+<h1><img src="assets/decision-helper-logo.png" alt="The Kempf Simple Decision Helper logo" width="72" align="center"> The Kempf Simple Decision Helper</h1>
 
 **Turn a difficult choice into a decision you can see, compare, and explain.**
 

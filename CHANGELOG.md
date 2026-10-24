@@ -1,8 +1,28 @@
 # Changelog
 
-## 0.3.49 — Beta release
+## 1.0.0 — Initial stable release
 
-- Prepared the next beta release with synchronized README, full user guide, in-app help, manifest, and compatibility metadata.
+- Released the complete visual decision workflow for comparing Options, Benefits, Risks, and sub-options in file-based decision maps.
+- Included templates, scoring and warnings, Standard/Staggered/Linear layouts, branch focus and locking, search, keyboard and touch controls, and three background themes.
+- Included Markdown reports, restorable JSON backups, SVG/JPG/PDF exports, and a zoomable presentation PDF preview workflow.
+- Allowed touchscreen pinch zoom to begin when either or both fingers start over nodes.
+- Added Event Planning, Travel Planning, and Pros and Cons starting templates with full previews.
+
+## 0.3.51 — Simplified sub-option defaults
+
+- Removed Default sub-option behavior from the main plugin settings.
+- Made newly created Options begin consistently in Single Path mode while preserving the saved mode of existing Options.
+- Removed the retired preference from previously saved plugin settings during startup.
+
+## 0.3.50 — Simplified zoom defaults
+
+- Removed Default zoom from the main plugin settings.
+- Made new decisions start consistently at 100% while preserving each existing decision's saved zoom.
+- Removed the retired preference from previously saved plugin settings during startup.
+
+## 0.3.49 — Release preparation
+
+- Prepared the next release with synchronized README, full user guide, in-app help, manifest, and compatibility metadata.
 - Documented all 16 Standard, Staggered, and Linear arrangements and clarified that layout changes do not affect decision data or scores.
 - Updated the Decision Options and background-menu instructions to match the visual layout picker.
 - Standardized release documentation around the current branch, appearance, export, and modal behavior.

@@ -18,8 +18,6 @@ const DEFAULT_SETTINGS = {
   defaultFolder: "",
   defaultBackground: "system",
   defaultLayout: "down",
-  defaultZoom: "1",
-  defaultSubOptionMode: "alternative",
   confirmDelete: true,
 };
 const CARD_WIDTH = 230;
@@ -97,6 +95,32 @@ const DECISION_TEMPLATES = {
       { text: "Postpone", factors: [{ type: "benefit", text: "Preserve cash now" }, { type: "risk", text: "Damage or costs may grow" }] },
     ],
   },
+  event_planning: {
+    name: "Event Planning",
+    description: "Compare practical ways to host an event by cost, effort, and guest experience.",
+    options: [
+      { text: "Host it yourself", factors: [{ type: "benefit", text: "More control and personal touches" }, { type: "risk", text: "More setup and cleanup work" }] },
+      { text: "Book a venue", factors: [{ type: "benefit", text: "Professional space and support" }, { type: "risk", text: "Higher cost and less flexibility" }] },
+      { text: "Keep it small and simple", factors: [{ type: "benefit", text: "Easier to organize and afford" }, { type: "risk", text: "Fewer guests or activities" }] },
+    ],
+  },
+  travel_planning: {
+    name: "Travel Planning",
+    description: "Compare common travel choices by convenience, cost, flexibility, and time.",
+    options: [
+      { text: "Drive", factors: [{ type: "benefit", text: "Flexible schedule and stops" }, { type: "risk", text: "Long drive and fuel costs" }] },
+      { text: "Fly", factors: [{ type: "benefit", text: "Usually faster for long distances" }, { type: "risk", text: "Tickets, delays, and airport time" }] },
+      { text: "Train or bus", factors: [{ type: "benefit", text: "Travel without driving" }, { type: "risk", text: "Limited routes and schedules" }] },
+    ],
+  },
+  pros_and_cons: {
+    name: "Pros and Cons",
+    description: "Start a straightforward comparison with two choices and editable pros and cons.",
+    options: [
+      { text: "Choice A", factors: [{ type: "benefit", text: "Most important pro" }, { type: "risk", text: "Most important con" }] },
+      { text: "Choice B", factors: [{ type: "benefit", text: "Most important pro" }, { type: "risk", text: "Most important con" }] },
+    ],
+  },
 };
 
 function normalizeBackground(value) {
@@ -165,11 +189,9 @@ function emptyMap() {
 }
 
 function newMapWithDefaults(settings) {
-  const zoomSetting = settings.defaultZoom || "1";
   return {
     ...emptyMap(),
-    zoom: zoomSetting === "0.75" ? 0.75 : 1,
-    fitOnOpen: zoomSetting === "fit",
+    zoom: 1,
     layout: normalizeLayout(settings.defaultLayout),
     background: normalizeBackground(settings.defaultBackground),
   };
@@ -181,13 +203,13 @@ function createDecisionMapFromTemplate(settings, title, templateId = "blank") {
   const makeId = () => `node-${Date.now()}-${++sequence}-${Math.random().toString(36).slice(2, 7)}`;
   const root = {
     id: makeId(), text: title, type: "decision", parentId: null, relationship: "", likelihood: 0, impact: 0,
-    isConstraint: false, subOptionMode: settings.defaultSubOptionMode, notes: "", collapsed: false, locked: false, childIds: [],
+    isConstraint: false, subOptionMode: "alternative", notes: "", collapsed: false, locked: false, childIds: [],
   };
   const nodes = [root];
   for (const optionTemplate of template.options) {
     const option = {
       id: makeId(), text: optionTemplate.text, type: "option", parentId: root.id, relationship: DEFAULT_RELATIONSHIPS.option,
-      likelihood: 0, impact: 0, isConstraint: false, subOptionMode: settings.defaultSubOptionMode, notes: "", collapsed: false, locked: false, childIds: [],
+      likelihood: 0, impact: 0, isConstraint: false, subOptionMode: "alternative", notes: "", collapsed: false, locked: false, childIds: [],
     };
     root.childIds.push(option.id);
     nodes.push(option);
@@ -874,7 +896,7 @@ class DecisionHelpModal extends Modal {
     section("Reading the scale", "+100 is entirely favorable, −100 is entirely unfavorable, and a score near 0 is balanced. The score helps comparison; it does not make the choice for you.");
     section("Sub-options: Single Path or All Paths", "Use Single Path when the child options are alternatives, such as drive, take the bus, or walk. Use All Paths when every child is part of one plan, such as review notes, practice questions, and get enough sleep.");
     section("Sub-option badges", "An option with child options is marked SINGLE PATH or ALL PATHS, so the tree shows whether it will select the strongest child path or combine every child path.");
-    section("Starting templates", "When creating a decision, choose Blank, Simple Choice, Buy or Keep, Education/Training, or Home Improvement. Preview shows the Decision, Options, Benefits, and Risks before the file is created. Template nodes are ordinary editable nodes; replace or remove anything that does not fit your decision.");
+    section("Starting templates", "When creating a decision, choose Blank, Simple Choice, Buy or Keep, Education/Training, Home Improvement, Event Planning, Travel Planning, or Pros and Cons. Preview shows the Decision, Options, Benefits, and Risks before the file is created. Template nodes are ordinary editable nodes; replace or remove anything that does not fit your decision.");
     section("Incomplete All Paths plans", "If a required All Paths sub-option has no rated benefits or risks, the summary names that path and warns that it was excluded from the numerical score. Evaluate every required path before treating the plan as complete.");
     section("Deal-breakers", "Turn this on only for a risk that makes an option unacceptable regardless of its numerical score—for example, an option that exceeds a firm budget limit.");
     section("Reading the Decision summary", "The comparison chart is ordered from strongest to weakest. Red extends left for risks and green extends right for benefits. Click an option in the chart to select and reveal the same node in the tree. Not evaluated means an option has no benefits or risks yet and is excluded from the recommendation. The summary remembers whether it was expanded or collapsed when you reopen the decision. Pin selected node information while inspecting other nodes, or collapse it to save space.");
@@ -1004,23 +1026,49 @@ class PresentationPreviewModal extends Modal {
     this.suggestedName = options.suggestedName;
     this.onSave = options.onSave;
     this.previewUrls = [];
+    this.previewSheets = [];
+    this.previewZoom = 1;
   }
 
   onOpen() {
     this.modalEl.addClass("kdh-presentation-preview-modal");
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h2", { text: "Presentation preview" });
-    contentEl.createEl("p", { cls: "kdh-presentation-preview-help", text: "Letter size · 8.5 × 11 inches · one page" });
+    const header = contentEl.createDiv({ cls: "kdh-presentation-preview-header" });
+    const heading = header.createDiv({ cls: "kdh-presentation-preview-heading" });
+    heading.createEl("h2", { text: "Presentation preview" });
+    heading.createEl("p", {
+      cls: "kdh-presentation-preview-help",
+      text: `Letter size · 8.5 × 11 inches · ${this.svgs.length === 1 ? "one page" : `${this.svgs.length} pages`}`,
+    });
+    const zoomControls = header.createDiv({ cls: "kdh-presentation-preview-zoom" });
+    const zoomOut = zoomControls.createEl("button", { cls: "clickable-icon", attr: { type: "button", "aria-label": "Zoom preview out" } });
+    setIcon(zoomOut, "zoom-out");
+    this.previewZoomLabel = zoomControls.createEl("button", {
+      cls: "kdh-presentation-preview-zoom-label",
+      text: "100%",
+      attr: { type: "button", "aria-label": "Reset preview zoom to 100%", title: "Reset preview zoom to 100%" },
+    });
+    const zoomIn = zoomControls.createEl("button", { cls: "clickable-icon", attr: { type: "button", "aria-label": "Zoom preview in" } });
+    setIcon(zoomIn, "zoom-in");
+    zoomOut.addEventListener("click", () => this.setPreviewZoom(this.previewZoom - 0.25));
+    this.previewZoomLabel.addEventListener("click", () => this.setPreviewZoom(1));
+    zoomIn.addEventListener("click", () => this.setPreviewZoom(this.previewZoom + 0.25));
+    this.previewZoomOutButton = zoomOut;
+    this.previewZoomInButton = zoomIn;
+
     const stage = contentEl.createDiv({ cls: "kdh-presentation-preview-stage" });
+    this.previewStage = stage;
     this.svgs.forEach((svg, index) => {
       const wrapper = stage.createDiv({ cls: "kdh-presentation-preview-sheet" });
+      this.previewSheets.push(wrapper);
       wrapper.createDiv({ cls: "kdh-presentation-preview-page-label", text: `Page ${index + 1} of ${this.svgs.length}` });
       const page = wrapper.createDiv({ cls: "kdh-presentation-preview-page" });
       const previewUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
       this.previewUrls.push(previewUrl);
       page.createEl("img", { attr: { src: previewUrl, alt: `Preview of decision presentation page ${index + 1}` } });
     });
+    this.setPreviewZoom(1);
 
     const footer = contentEl.createDiv({ cls: "kdh-presentation-preview-footer" });
     footer.createDiv({ cls: "kdh-presentation-preview-filename", text: this.suggestedName });
@@ -1041,9 +1089,33 @@ class PresentationPreviewModal extends Modal {
     });
   }
 
+  setPreviewZoom(nextZoom) {
+    const stage = this.previewStage;
+    const previousWidth = stage?.scrollWidth || 1;
+    const previousHeight = stage?.scrollHeight || 1;
+    const centerX = stage ? (stage.scrollLeft + stage.clientWidth / 2) / previousWidth : 0.5;
+    const centerY = stage ? (stage.scrollTop + stage.clientHeight / 2) / previousHeight : 0;
+    this.previewZoom = Math.max(0.5, Math.min(2, Math.round(nextZoom * 4) / 4));
+    this.previewSheets.forEach((sheet) => { sheet.style.zoom = String(this.previewZoom); });
+    this.previewZoomLabel?.setText(`${Math.round(this.previewZoom * 100)}%`);
+    if (this.previewZoomOutButton) this.previewZoomOutButton.disabled = this.previewZoom <= 0.5;
+    if (this.previewZoomInButton) this.previewZoomInButton.disabled = this.previewZoom >= 2;
+    if (stage) {
+      requestAnimationFrame(() => {
+        stage.scrollLeft = Math.max(0, centerX * stage.scrollWidth - stage.clientWidth / 2);
+        stage.scrollTop = Math.max(0, centerY * stage.scrollHeight - stage.clientHeight / 2);
+      });
+    }
+  }
+
   onClose() {
     this.previewUrls.forEach((url) => URL.revokeObjectURL(url));
     this.previewUrls = [];
+    this.previewSheets = [];
+    this.previewStage = null;
+    this.previewZoomLabel = null;
+    this.previewZoomOutButton = null;
+    this.previewZoomInButton = null;
     this.contentEl.empty();
   }
 }
@@ -1081,29 +1153,6 @@ class DecisionHelperSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
             this.display();
           }).open();
-        }));
-    new Setting(containerEl)
-      .setName("Default zoom")
-      .setDesc("Initial view used when opening a newly created decision.")
-      .addDropdown((dropdown) => dropdown
-        .addOption("0.75", "75%")
-        .addOption("1", "100%")
-        .addOption("fit", "Fit to screen")
-        .setValue(this.plugin.settings.defaultZoom)
-        .onChange(async (value) => {
-          this.plugin.settings.defaultZoom = value;
-          await this.plugin.saveSettings();
-        }));
-    new Setting(containerEl)
-      .setName("Default sub-option behavior")
-      .setDesc("How Options in new decisions evaluate their child Options.")
-      .addDropdown((dropdown) => dropdown
-        .addOption("alternative", "Single Path")
-        .addOption("combined", "All Paths")
-        .setValue(this.plugin.settings.defaultSubOptionMode)
-        .onChange(async (value) => {
-          this.plugin.settings.defaultSubOptionMode = value;
-          await this.plugin.saveSettings();
         }));
     new Setting(containerEl)
       .setName("Confirm before deleting")
@@ -2324,7 +2373,7 @@ class DecisionMapView extends TextFileView {
     new NodeEditorModal(this.app, {
       heading: "Add connected item",
       type: defaultType,
-      subOptionMode: this.plugin.settings.defaultSubOptionMode,
+      subOptionMode: "alternative",
       allowedTypes: parent.type === "decision" ? ["option"] : ["option", "benefit", "risk"],
       onSave: async (data) => {
         this.rememberViewport();
@@ -4273,6 +4322,9 @@ class DecisionMapView extends TextFileView {
     const beginPinch = () => {
       const points = [...touches.values()].slice(0, 2);
       if (points.length < 2) return;
+      for (const point of points) {
+        try { scroller.setPointerCapture(point.pointerId); } catch (_) {}
+      }
       const rect = scroller.getBoundingClientRect();
       pinch = {
         distance: Math.max(1, touchDistance(points)),
@@ -4286,21 +4338,29 @@ class DecisionMapView extends TextFileView {
 
     scroller.addEventListener("pointerdown", (event) => {
       if (event.pointerType !== "touch") return;
-      if (!touches.size && event.target.closest(".kdh-node, .kdh-edge-label, .kdh-toolbar")) return;
-      event.preventDefault();
-      scroller.setPointerCapture(event.pointerId);
-      touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      const startedOnContent = Boolean(event.target.closest(".kdh-node, .kdh-edge-label, .kdh-toolbar"));
+      touches.set(event.pointerId, { pointerId: event.pointerId, x: event.clientX, y: event.clientY, startedOnContent });
       if (touches.size === 1) {
         touchMoved = false;
-        touchPan = { x: event.clientX, y: event.clientY, left: scroller.scrollLeft, top: scroller.scrollTop };
-        scroller.addClass("is-panning");
-      } else if (touches.size === 2) beginPinch();
-    });
+        if (!startedOnContent) {
+          event.preventDefault();
+          scroller.setPointerCapture(event.pointerId);
+          touchPan = { x: event.clientX, y: event.clientY, left: scroller.scrollLeft, top: scroller.scrollTop };
+          scroller.addClass("is-panning");
+        } else {
+          touchPan = null;
+        }
+      } else if (touches.size === 2) {
+        event.preventDefault();
+        beginPinch();
+      }
+    }, true);
 
     scroller.addEventListener("pointermove", (event) => {
       if (event.pointerType !== "touch" || !touches.has(event.pointerId)) return;
       event.preventDefault();
-      touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      const point = touches.get(event.pointerId);
+      touches.set(event.pointerId, { ...point, x: event.clientX, y: event.clientY });
       if (touches.size >= 2 && pinch) {
         const points = [...touches.values()].slice(0, 2);
         const rect = scroller.getBoundingClientRect();
@@ -4378,9 +4438,15 @@ class DecisionMapView extends TextFileView {
 
 module.exports = class KempfSimpleDecisionHelperPlugin extends Plugin {
   async onload() {
-    this.settings = { ...DEFAULT_SETTINGS, ...(await this.loadData()) };
+    const storedSettings = (await this.loadData()) || {};
+    const removedRetiredSetting = Object.prototype.hasOwnProperty.call(storedSettings, "defaultZoom")
+      || Object.prototype.hasOwnProperty.call(storedSettings, "defaultSubOptionMode");
+    this.settings = { ...DEFAULT_SETTINGS, ...storedSettings };
+    delete this.settings.defaultZoom;
+    delete this.settings.defaultSubOptionMode;
     this.settings.defaultBackground = normalizeBackground(this.settings.defaultBackground);
     this.settings.defaultLayout = normalizeLayout(this.settings.defaultLayout);
+    if (removedRetiredSetting) await this.saveSettings();
     this.registerView(VIEW_TYPE, (leaf) => new DecisionMapView(leaf, this));
     this.registerExtensions([FILE_EXTENSION], VIEW_TYPE);
     this.addSettingTab(new DecisionHelperSettingTab(this.app, this));

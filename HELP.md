@@ -14,7 +14,7 @@ The plugin does not make the decision for you. It makes your reasoning easier to
 
 ## Starting a decision
 
-Choose a starting template and select **Preview** to inspect its complete Decision, Option, Benefit, and Risk structure before creating the file. The available templates are **Blank**, **Simple Choice**, **Buy or Keep**, **Education/Training**, and **Home Improvement**. Every generated node is editable or removable.
+Choose a starting template and select **Preview** to inspect its complete Decision, Option, Benefit, and Risk structure before creating the file. The available templates are **Blank**, **Simple Choice**, **Buy or Keep**, **Education/Training**, **Home Improvement**, **Event Planning**, **Travel Planning**, and **Pros and Cons**. Every generated node is editable or removable.
 
 ## The four parts of a map
 
@@ -318,7 +318,7 @@ The background menu also offers:
 
 The toolbar's Decision Options window controls layout, warnings, score labels, dimming of unselected branches, sibling spacing, and level spacing for the current map. When dimming is enabled and a non-root node is selected, its path to the Decision and all of its descendants remain clear while unrelated branches fade.
 
-Global plugin settings control the defaults used by new decisions, including background, layout, zoom, sub-option mode, and deletion confirmation. The **New decision folder** section lets you choose an existing vault folder or create and immediately use a new nested folder.
+Global plugin settings control the defaults used by new decisions, including background, layout, and deletion confirmation. New decisions begin at 100% zoom; each decision remembers its own zoom afterward. Newly created Options begin in **Single Path** mode, which you can change for each Option when needed. The **New decision folder** section lets you choose an existing vault folder or create and immediately use a new nested folder.
 
 ## Files and backups
 
@@ -337,7 +337,7 @@ Markdown creates a readable Obsidian note containing the decision, recommendatio
 - SVG is best for a sharp, scalable diagram.
 - JPG is convenient for sharing.
 - PDF creates a printable one-page overview.
-- Presentation PDF creates a compact Letter-size decision brief containing the recommendation, comparison chart, important warning, strongest benefits, greatest risks, and leading option snapshots. If the content cannot fit cleanly, complete comparison rows or sections continue on numbered pages. Review every page in the preview, then choose **Save PDF** to open the system save dialog or **Cancel** to discard it.
+- Presentation PDF creates a compact Letter-size decision brief containing the recommendation, comparison chart, important warning, strongest benefits, greatest risks, and leading option snapshots. If the content cannot fit cleanly, complete comparison rows or sections continue on numbered pages. Use the preview's minus and plus controls to inspect each page from 50% to 200%; select the percentage to return to 100%. Then choose **Save PDF** to open the system save dialog or **Cancel** to discard it.
 
 ## Practical advice
 

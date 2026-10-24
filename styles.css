@@ -318,8 +318,14 @@
 
 .kdh-presentation-preview-modal { height: min(900px, 94vh); max-width: 96vw; min-height: 480px; width: min(920px, 94vw); }
 .kdh-presentation-preview-modal .modal-content { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; padding-bottom: 0; }
-.kdh-presentation-preview-modal h2 { flex: 0 0 auto; margin: 0 0 3px; }
-.kdh-presentation-preview-help { color: var(--text-muted); flex: 0 0 auto; margin: 0 0 10px; }
+.kdh-presentation-preview-header { align-items: center; display: flex; flex: 0 0 auto; gap: 16px; justify-content: space-between; margin-bottom: 10px; }
+.kdh-presentation-preview-heading { min-width: 0; }
+.kdh-presentation-preview-modal h2 { margin: 0 0 3px; }
+.kdh-presentation-preview-help { color: var(--text-muted); margin: 0; }
+.kdh-presentation-preview-zoom { align-items: center; display: flex; flex: 0 0 auto; gap: 5px; }
+.kdh-presentation-preview-zoom button { align-items: center; display: inline-flex; height: 32px; justify-content: center; min-width: 32px; }
+.kdh-presentation-preview-zoom-label { background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 6px; color: var(--text-muted); font-size: var(--font-ui-smaller); font-variant-numeric: tabular-nums; padding: 0 8px; }
+.kdh-presentation-preview-zoom-label:hover { background: var(--background-modifier-hover); color: var(--text-normal); }
 .kdh-presentation-preview-stage { align-items: center; background: #25262a; border: 1px solid var(--background-modifier-border); border-radius: 9px; display: flex; flex: 1 1 auto; flex-direction: column; gap: 22px; justify-content: flex-start; min-height: 0; overflow: auto; padding: 22px; }
 .kdh-presentation-preview-sheet { align-items: center; display: flex; flex: 0 0 auto; flex-direction: column; gap: 6px; max-width: min(100%, 680px); }
 .kdh-presentation-preview-page-label { color: #d8dce3; font-size: var(--font-ui-smaller); font-weight: 650; }
@@ -330,6 +336,7 @@
 .kdh-presentation-preview-actions { display: flex; flex: 0 0 auto; gap: 8px; }
 @media (max-width: 700px) {
   .kdh-presentation-preview-modal { height: calc(100dvh - 24px); min-height: 0; width: calc(100vw - 16px); }
+  .kdh-presentation-preview-header { align-items: flex-start; }
   .kdh-presentation-preview-stage { padding: 10px; }
   .kdh-presentation-preview-footer { align-items: stretch; flex-direction: column; }
   .kdh-presentation-preview-actions { justify-content: flex-end; }

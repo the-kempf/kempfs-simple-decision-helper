@@ -1,4 +1,4 @@
-<h1> The Kempf Simple Decision Helper</h1>
+<h1><img src="assets/decision-helper-logo.png" alt="The Kempf Simple Decision Helper logo" width="72" align="center"> The Kempf Simple Decision Helper</h1>
 
 **Turn a difficult choice into a decision you can see, compare, and explain.**
 
@@ -26,7 +26,7 @@ Use it to compare purchases, home projects, education or career paths, family op
 
 ## Quick start
 
-Begin with a blank decision or preview a template for a Simple Choice, Buy or Keep decision, Education/Training choice, or Home Improvement project.
+Begin with a blank decision or preview a template for a Simple Choice, Buy or Keep decision, Education/Training choice, Home Improvement project, Event Planning, Travel Planning, or Pros and Cons comparison.
 
 1. Create a new decision from the ribbon icon or command palette.
 2. Write the question, choose a starting template, and use Preview to inspect it before creation.
@@ -136,7 +136,7 @@ Decision Options can dim unrelated branches. When a non-root node is selected, i
 - Markdown creates a readable decision report. It is not a restorable backup.
 - SVG and JPG create shareable images.
 - PDF creates a printable one-page overview.
-- Presentation PDF creates a polished Letter-size decision brief with the recommendation, comparison chart, warning, strongest benefits, greatest risks, and leading option snapshots. It stays compact when possible and adds clearly divided continuation pages when the content cannot fit. A Save/Cancel preview shows every page before the system save dialog.
+- Presentation PDF creates a polished Letter-size decision brief with the recommendation, comparison chart, warning, strongest benefits, greatest risks, and leading option snapshots. It stays compact when possible and adds clearly divided continuation pages when the content cannot fit. A zoomable Save/Cancel preview shows every page before the system save dialog.
 
 ## Current release
 
